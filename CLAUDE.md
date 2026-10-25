@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**Posadka** (working title; public brand: **Heroi / ГЕРОЇ**) — mobile isometric real-time tactics (Russo-Ukrainian war), Godot 4.7, GDScript, Mobile renderer. The full design and balance reference is `docs/GDD.md`; its §9 maps every script to its responsibility — keep both in sync when systems change.
+**Heroi / ГЕРОЇ** — mobile isometric real-time tactics (Russo-Ukrainian war), Godot 4.7, GDScript, Mobile renderer. The full design and balance reference is `docs/GDD.md`; its §9 maps every script to its responsibility — keep both in sync when systems change.
 
 ## Commands
 
@@ -40,7 +40,7 @@ Key structural facts that span files:
 
 ## Conventions
 
-- Commit messages use Conventional Commits (`feat:`, `fix:`, `chore:`, …). Never mention the name "Posadka" in commit messages or anything else that leaves the repo — it is a working title. The public brand is "Heroi" / "ГЕРОЇ" (branding assets regenerate via `scripts/dev/make_branding.gd`).
+- Commit messages use Conventional Commits (`feat:`, `fix:`, `chore:`, …). The game's name is "Heroi" / "ГЕРОЇ" (branding assets regenerate via `scripts/dev/make_branding.gd`).
 - `*.gd.uid` files are Godot-generated; commit them alongside their scripts, never edit them.
 - Input is touch-first (landscape phone); desktop mouse is handled directly, not through touch emulation (`emulate_touch_from_mouse=false`).
 - Tone constraints from the GDD apply to content work: fictional places/units, no gore or kill-cams, no "Z"/"V" symbolism, sober presentation.
