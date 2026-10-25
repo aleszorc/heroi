@@ -35,7 +35,7 @@ static func fire(b: Battle, shooter: Unit, from: Vector3, wid: String, target: U
 		var miss := 1.0 + d * 0.02
 		impact += Vector3(randf_range(-miss, miss), randf_range(-0.8, 0.3), randf_range(-miss, miss))
 		impact.y = maxf(impact.y, b.map.height_at(impact) + 0.1)
-	b.fx.shot(from, impact, w)
+	b.fx.shot(from, impact, w, wid)
 	b.schedule(d / float(w["speed"]), func() -> void: _impact(b, shooter, w, target, impact, hit, from))
 	return true
 
@@ -70,7 +70,7 @@ static func fire_area(b: Battle, shooter: Unit, from: Vector3, wid: String, poin
 	impact.y = b.map.height_at(impact) + 0.5
 	if b.map.los(from, impact) < MIN_VIS:
 		return false
-	b.fx.shot(from, impact, w)
+	b.fx.shot(from, impact, w, wid)
 	var blast: float = w["blast"]
 	var supp: float = w["supp"]
 	var acc: float = w["acc"]

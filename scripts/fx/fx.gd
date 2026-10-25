@@ -159,10 +159,13 @@ func _update_pools(dt: float) -> void:
 
 # --- Shots ---
 
-func shot(from: Vector3, to: Vector3, w: Dictionary) -> void:
+func shot(from: Vector3, to: Vector3, w: Dictionary, wid := "") -> void:
 	var kind: String = w["fx"]
 	var spd: float = w["speed"]
-	muzzle(from, 0.35 if kind == "bullet" else 0.9)
+	if kind == "bullet":
+		muzzle_flash(from, (to - from).normalized(), wid)
+	else:
+		muzzle(from, 0.9)
 	match kind:
 		"bullet":
 			_projectile(from, to, Color(1.0, 0.82, 0.45), spd, 1.0, false)
@@ -189,11 +192,53 @@ func _projectile(from: Vector3, to: Vector3, color: Color, spd: float, thick: fl
 	tw.tween_callback(mi.queue_free)
 
 
+## Big-gun muzzle flash (shells, rockets, missiles): the original round glow plus smoke.
 func muzzle(pos: Vector3, size: float) -> void:
 	puffs.glow.emit(pos, Vector3.ZERO, 0.07, size * 0.6, size, Color(1.0, 0.85, 0.4), 0.0, 0.0)
 	if size > 0.5:
 		for i in 3:
 			puffs.smoke.emit(pos, _rand_dir() * 0.8, randf_range(0.8, 1.4), 0.3, 1.0, _grey(0.55, 0.7, 0.8), 2.0, 0.3)
+
+
+## Small-arms muzzle fire: a 1-2 frame directional flash (hot core, short jet along the
+## barrel, faint star spikes) plus one quick wisp of powder smoke. Sized per weapon class;
+## machine guns leave a brief flickering emitter so a burst strobes. All unshaded glow
+## puffs, so the flash reads in shadow.
+func muzzle_flash(pos: Vector3, dir: Vector3, wid := "") -> void:
+	if dir.length_squared() < 0.01:
+		dir = Vector3.FORWARD
+	var s := 0.26
+	match wid:
+		"pkm", "coax":
+			s = 0.34
+			_emitters.append({"kind": "flash", "pos": pos, "dir": dir,
+					"until": _time + 0.16, "acc": 0.0, "s": s})
+		"sniper":
+			s = 0.48
+	_flash(pos, dir, s)
+	puffs.smoke.emit(pos + dir * 0.15, dir * randf_range(0.4, 0.8) + Vector3.UP * 0.3,
+			randf_range(0.5, 0.8), 0.07, randf_range(0.25, 0.4), _grey(0.6, 0.75, 0.35), 2.5, 0.4)
+
+
+## One flash: 4 glow puffs, each alive ~0.05 s.
+func _flash(pos: Vector3, dir: Vector3, s: float) -> void:
+	puffs.glow.emit(pos, Vector3.ZERO, 0.05, s * 0.8, s, Color(1.0, 0.93, 0.6), 0.0, 0.0)
+	puffs.glow.emit(pos + dir * s * 0.9, dir * 1.5, 0.05, s * 0.45, s * 0.6,
+			Color(1.0, 0.72, 0.3), 0.0, 0.0)
+	var side := dir.cross(Vector3.UP)
+	side = Vector3.RIGHT if side.length_squared() < 0.01 else side.normalized()
+	for sgn: float in [1.0, -1.0]:
+		puffs.glow.emit(pos + side * sgn * s * 0.45, side * sgn * 0.8, 0.04, s * 0.3, s * 0.4,
+				Color(1.0, 0.7, 0.3, 0.9), 0.0, 0.0)
+
+
+## The flicker an MG burst keeps up for a few rounds after the first flash.
+func _emit_flash(e: Dictionary, dt: float) -> void:
+	e["acc"] = float(e["acc"]) + dt
+	while float(e["acc"]) >= 0.055:
+		e["acc"] = float(e["acc"]) - 0.055
+		if randf() < 0.75:
+			_flash(e["pos"], e["dir"], float(e["s"]) * randf_range(0.65, 1.0))
 
 
 ## Big guns kick up a ring of dust under the muzzle.
@@ -281,6 +326,8 @@ func _process(delta: float) -> void:
 				_emit_smoke(e, dt)
 			"fire":
 				_emit_fire(e, dt)
+			"flash":
+				_emit_flash(e, dt)
 	for i in range(_missiles.size() - 1, -1, -1):
 		var m := _missiles[i]
 		if not is_instance_valid(m["node"]):
