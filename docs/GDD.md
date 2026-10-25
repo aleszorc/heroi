@@ -347,6 +347,7 @@ Godot 4.7, GDScript, Mobile renderer. Everything is built in code from `scenes/m
 | Path | Responsibility |
 |---|---|
 | `scripts/core/game.gd` | Autoload: internal pause and speed, side constants, test arguments, flow state (`show_menu`, next mission, curated `scenario`) |
+| `scripts/core/springs.gd` | Exact damped springs for procedural animation (Holden's "Spring Roll Call"): scalar/vector/quaternion trackers, damper alpha, quaternion log/exp for inertialization |
 | `scripts/data/defs.gd` | Weapon and unit tables (all balance numbers) |
 | `scripts/data/mission_treeline.gd` | Hand-built mission: map painting, buildings, units, waves |
 | `scripts/data/mission_gen.gd` | Procedural missions from kind + seed (assault, defend, meeting, treeline) |
@@ -355,7 +356,7 @@ Godot 4.7, GDScript, Mobile renderer. Everything is built in code from `scenes/m
 | `scripts/map/battle_map.gd` | Grid, terrain properties, heights, crater dimple deformation, A* paths, LOS, cover search |
 | `scripts/map/map_view.gd` | Chunked ground mesh with local rebuild, multimesh trees and props, crater mesh registry (merge-grow, no stacking), buildings, wrecks |
 | `scripts/art/mesh_factory.gd` | All procedural models (soldiers, vehicles, trees, houses, drones) |
-| `scripts/units/*.gd` | `Unit` base (orders, autonomy, morale, spotting state), `InfantryUnit`, `Soldier` (rig, animation, steering), `VehicleUnit` |
+| `scripts/units/*.gd` | `Unit` base (orders, autonomy, morale, spotting state), `InfantryUnit`, `Soldier` (rig, spring-smoothed animation with inertialized pose switches, steering), `VehicleUnit` |
 | `scripts/map/building.gd` | Destructible houses: pieces, damage, debris, roof collapse, grid upkeep |
 | `scripts/fx/puffs.gd` | Volumetric puff particle system (smoke, dust, flame) |
 | `scripts/audio/sfx.gd` | Sound effects: pooled positional one-shots, drone/engine loops, field ambience |

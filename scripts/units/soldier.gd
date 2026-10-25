@@ -12,6 +12,9 @@ extends Node3D
 ## between running, walking, crouch-walking, crawling, kneeling, lying prone, ducking behind
 ## cover and rising to fire. Death plays a physics-flavoured fall, and blasts throw the body.
 ##
+## All blends run on exact damped springs (Springs helper) and pose-formula switches are
+## inertialized (_inertialize), so motion stays velocity-continuous at any framerate.
+##
 ## BEHAVIOUR STATE MACHINE (`st`, enum ST). Events (die, expire, recover, task and action
 ## starts) change the underlying facts; `_update_state()` derives the one authoritative
 ## state from them every animation tick, so it can never desynchronize. Transitions:
@@ -205,6 +208,39 @@ var _turn_rate := 0.0
 var _accel := 0.0
 var _last_speed := 0.0
 var _aim_blend := 0.0
+## Spring-smoothed blends (Springs.Flt carries velocity, so stance, aim and relax
+## changes accelerate in and ease out instead of moving linearly and stopping dead).
+var _crouch_sp := Springs.Flt.new()
+var _prone_sp := Springs.Flt.new()
+var _aim_sp := Springs.Flt.new()
+var _relax_sp := Springs.Flt.new(1.0)
+## Root dip on hard stops and vault landings: a spring kicked by deceleration.
+var _dip_sp := Springs.Flt.new()
+## Staged torso pitch of the prone transition (chest down last, up first); the weapon
+## and arm poles follow this rather than raw `prone` so the hands brace realistically.
+var _prone_vis := 0.0
+## Weapon pose lag: the carried weapon chases its target pose on a short spring, so
+## carry changes flow into each other and turns drag the muzzle a hair behind.
+var _w_sp_pos := Springs.Vec.new()
+var _w_sp_rot := Springs.Quat.new()
+var _w_sp_init := false
+## Inertialization: when the pose formula switches discontinuously (an action starts or
+## ends, hands leave the weapon, the leg rig changes mode) the visible pose carries on
+## from where it was and the captured per-bone offset decays to zero on a spring.
+var _off_rot := PackedVector3Array()
+var _off_vel := PackedVector3Array()
+var _off_root := Vector3.ZERO
+var _off_root_v := Vector3.ZERO
+var _off_w := Vector3.ZERO
+var _off_w_v := Vector3.ZERO
+var _inert_t := 0.0
+var _pose_sig := ""
+var _sig_ready := false
+var _legs_mode := 0
+## Last frame's visible pose, as actually applied to the skeleton.
+var _last_q: Array[Quaternion] = []
+var _last_root := Vector3.ZERO
+var _last_w := Vector3.ZERO
 var _blob: MeshInstance3D
 var _push := Vector3.ZERO
 var _hand_r_sk := Vector3(0.25, 1.4, -0.3)
@@ -250,6 +286,10 @@ func setup(side: int, weapon_id: String) -> void:
 	_mesh.skin = MeshFactory.soldier_skin(_skel)
 	_q.resize(BONE_COUNT)
 	_q.fill(Quaternion.IDENTITY)
+	_off_rot.resize(BONE_COUNT)
+	_off_vel.resize(BONE_COUNT)
+	_last_q.resize(BONE_COUNT)
+	_last_q.fill(Quaternion.IDENTITY)
 	_blob = MeshInstance3D.new()
 	_blob.mesh = MeshFactory.blob_shadow()
 	_blob.top_level = true
@@ -315,6 +355,8 @@ func speed_cap() -> float:
 func snap_stance() -> void:
 	crouch = want_crouch
 	prone = want_prone
+	_crouch_sp.set_to(want_crouch)
+	_prone_sp.set_to(want_prone)
 
 
 ## Forgets the planted feet (teleports, deployment); they replant where he stands.
@@ -415,6 +457,9 @@ func recover() -> void:
 	_recover_q = _q.duplicate()
 	_recover_root = _root_pos
 	_recover_blend = 0.0
+	_inert_t = 0.0
+	_sig_ready = false
+	_w_sp_init = false
 	prone = 1.0
 	want_prone = 0.0
 	want_crouch = 0.5
@@ -493,10 +538,12 @@ func _tick_action(dt: float) -> void:
 		if action == "reload":
 			ammo = int(MAGS.get(weapon, [10, 2.6])[0])
 		elif action == "hopdown" or action == "clamber":
-			# Landed on the far side of the lip: replant the feet where he stands.
+			# Landed on the far side of the lip: replant the feet where he stands,
+			# knees taking the landing with a springy dip.
 			position = _vault_to
 			vel = Vector3.ZERO
 			reset_gait()
+			_dip_sp.v += 1.3 if action == "hopdown" else 0.6
 		action = ""
 
 
@@ -541,7 +588,7 @@ func steer(dt: float, goal: Vector3, max_speed: float, push: Vector3, map: Battl
 		# Arrive: ease off over the last couple of metres instead of stopping dead.
 		desired = to / d * minf(max_speed, d * 1.2)
 	# Spacing pushes are smoothed so neighbours drift apart rather than jostle.
-	_push = _push.lerp(push, minf(1.0, dt * 4.0))
+	_push = _push.lerp(push, Springs.alpha(0.17, dt))
 	desired += _push
 	max_speed *= pace
 	if desired.length() > max_speed:
@@ -578,7 +625,7 @@ func steer(dt: float, goal: Vector3, max_speed: float, push: Vector3, map: Battl
 		return
 	position = Vector3(np.x, map.height_at(np), np.z)
 	var speed := Vector2(vel.x, vel.z).length()
-	_accel = lerpf(_accel, (speed - _last_speed) / dt, minf(1.0, dt * 6.0))
+	_accel = lerpf(_accel, (speed - _last_speed) / dt, Springs.alpha(0.12, dt))
 	_last_speed = speed
 	var want := aim_yaw
 	if face_point != Vector3.INF:
@@ -588,8 +635,8 @@ func steer(dt: float, goal: Vector3, max_speed: float, push: Vector3, map: Battl
 	# Turn like a body, not a turret: eased and rate-limited, slower when lying down.
 	var max_turn := lerpf(5.0, 1.5, prone) * dt
 	var diff := wrapf(want - facing, -PI, PI)
-	var turn := clampf(diff * minf(1.0, dt * 8.0), -max_turn, max_turn)
-	_turn_rate = lerpf(_turn_rate, turn / dt, minf(1.0, dt * 8.0))
+	var turn := clampf(diff * Springs.alpha(0.09, dt), -max_turn, max_turn)
+	_turn_rate = lerpf(_turn_rate, turn / dt, Springs.alpha(0.09, dt))
 	facing += turn
 	rotation.y = facing
 
@@ -614,6 +661,8 @@ func die(knock: Vector3, up_speed: float, is_wounded := false) -> void:
 	hand_targets.clear()
 	slung = false
 	_recover_blend = 1.0
+	_inert_t = 0.0
+	_sig_ready = false
 	_death_q = _q.duplicate()
 	_death_root = _root_pos
 	_death_w = _w_pos
@@ -701,9 +750,11 @@ func animate(dt: float, sim_time: float, map: BattleMap) -> void:
 		gesture_t += dt
 		if gesture_t >= gesture_len or prone > 0.3 or cowering:
 			gesture = ""
-	var drop := 4.0 if action == "dive" or action == "react" else 1.6
-	prone = move_toward(prone, want_prone, (drop if want_prone > prone else 1.1) * dt)
-	crouch = move_toward(crouch, want_crouch, 2.8 * dt)
+	# Stances blend on critically damped springs: going flat is urgent (and urgent-er
+	# when diving), getting back up is deliberate.
+	var p_hl := (0.07 if action == "dive" or action == "react" else 0.18) if want_prone > prone else 0.32
+	prone = clampf(_prone_sp.track(want_prone, p_hl, dt), 0.0, 1.0)
+	crouch = clampf(_crouch_sp.track(want_crouch, 0.12, dt), 0.0, 1.0)
 	if action == "hopdown" or action == "clamber":
 		# Knees bend over the lip: a dip into the hop, a low pull over the climb.
 		var vp := clampf(action_t / maxf(action_len, 0.001), 0.0, 1.0)
@@ -716,12 +767,14 @@ func animate(dt: float, sim_time: float, map: BattleMap) -> void:
 		_step_len *= 0.78
 	if speed > 0.15:
 		_phase = fmod(_phase + speed * dt / (2.0 * _step_len) * TAU, TAU)
-	_recoil = maxf(0.0, _recoil - dt * 7.0)
+	# Recoil decays exponentially: a hard kick with a soft tail, no kink at the end.
+	_recoil *= exp(-dt * 6.0)
 	_clock += dt
 	var aiming := sim_time - last_shot < 1.5 or sim_time < engage_until
-	_aim_blend = move_toward(_aim_blend, 1.0 if aiming else 0.0, dt * 3.5)
+	_aim_blend = clampf(_aim_sp.track(1.0 if aiming else 0.0, 0.1, dt), 0.0, 1.0)
 	var want_relax := 0.0 if alert or aiming or cowering or prone > 0.3 else 1.0
-	_relax = move_toward(_relax, want_relax, dt * 1.6)
+	# Snapping alert is quick; easing back into a relaxed carry takes its time.
+	_relax = clampf(_relax_sp.track(want_relax, 0.12 if want_relax < _relax else 0.45, dt), 0.0, 1.0)
 	# Now and then a relaxed man shifts his grip and checks the weapon.
 	if _relax > 0.7 and action == "" and task == "":
 		_fidget_timer -= dt
@@ -730,7 +783,7 @@ func animate(dt: float, sim_time: float, map: BattleMap) -> void:
 			_fidget = 1.0
 	_fidget = maxf(0.0, _fidget - dt / 1.3)
 	_body_pose(speed, dt, map)
-	_hands_on_weapon(speed)
+	_hands_on_weapon(speed, dt)
 	if _recover_blend < 1.0:
 		# Getting up: ease from the captured lying pose into the live one.
 		_recover_blend = minf(1.0, _recover_blend + dt / 1.2)
@@ -738,7 +791,53 @@ func animate(dt: float, sim_time: float, map: BattleMap) -> void:
 		for i in BONE_COUNT:
 			_q[i] = _recover_q[i].slerp(_q[i], e)
 		_root_pos = _recover_root.lerp(_root_pos, e)
+	_inertialize(dt)
 	_apply()
+
+
+## Hides the seams where the pose formula switches (actions starting and ending, hands
+## leaving the weapon for rescue work, cowering, slinging, the leg rig changing mode):
+## on a switch the gap between last frame's visible pose and the new computed pose is
+## captured per bone and decays to zero on a spring, so the body carries on from where
+## it was instead of popping. _q holds the visible pose after this, which is also what
+## die() and recover() capture for their own blends.
+func _inertialize(dt: float) -> void:
+	# want_prone is in the signature because the transition stages differ by direction:
+	# reversing mid-transition switches curve sets, and the capture hides that step.
+	var sig := "%s|%d|%d|%d|%d|%d" % [action, _legs_mode, int(cowering), int(slung), int(hand_targets.is_empty()), int(want_prone > 0.5)]
+	if not _sig_ready:
+		_sig_ready = true
+		_pose_sig = sig
+		return
+	if sig != _pose_sig:
+		_pose_sig = sig
+		for i in BONE_COUNT:
+			_off_rot[i] = Springs.q_to_sav(_last_q[i] * _q[i].inverse())
+		_off_root = _last_root - _root_pos
+		_off_w = _last_w - _w_pos
+		_inert_t = 0.7
+	if _inert_t <= 0.0:
+		return
+	_inert_t -= dt
+	var y := Springs.damping(0.12) * 0.5
+	var e := exp(-y * dt)
+	for i in BONE_COUNT:
+		var o := _off_rot[i]
+		var ov := _off_vel[i]
+		var j1 := ov + o * y
+		o = e * (o + j1 * dt)
+		ov = e * (ov - j1 * y * dt)
+		_off_rot[i] = o
+		_off_vel[i] = ov
+		_q[i] = Springs.q_from_sav(o) * _q[i]
+	var j1r := _off_root_v + _off_root * y
+	_off_root = e * (_off_root + j1r * dt)
+	_off_root_v = e * (_off_root_v - j1r * y * dt)
+	_root_pos += _off_root
+	var j1w := _off_w_v + _off_w * y
+	_off_w = e * (_off_w + j1w * dt)
+	_off_w_v = e * (_off_w_v - j1w * y * dt)
+	_w_pos += _off_w
 
 
 static func _qe(x: float, y: float, z: float) -> Quaternion:
@@ -756,6 +855,16 @@ func _body_pose(speed: float, dt: float, map: BattleMap) -> void:
 	# Going down or getting up passes through a crouch.
 	var transit := 1.0 - absf(2.0 * p - 1.0) if p > 0.02 and p < 0.98 else 0.0
 	var c := maxf(crouch, transit) * (1.0 - p)
+	# The prone transition is staged like a real one. Down: sink through a kneel, legs
+	# slide back, chest lowers last. Up: push-up (chest arches off the ground), knees
+	# drawn forward under the body, hips rising through all-fours and kneel heights,
+	# torso un-pitching gradually the whole way. `sink` is the hips' own height curve:
+	# the root is DERIVED from it further down, so pitching can never fling the body.
+	var rising := want_prone < 0.5
+	var sink := smoothstep(0.05, 0.75, p) if rising else smoothstep(0.2, 0.75, p)
+	var legs_back := smoothstep(0.55, 0.95, p) if rising else smoothstep(0.3, 0.8, p)
+	var pitch := smoothstep(0.1, 0.9, p) if rising else smoothstep(0.45, 0.97, p)
+	_prone_vis = pitch
 
 	var hips_yaw := sw * (0.1 + 0.06 * run) * moving * (1.0 - p)
 	var spine := -0.06 * moving - 0.22 * run
@@ -771,6 +880,9 @@ func _body_pose(speed: float, dt: float, map: BattleMap) -> void:
 		look = 0.0
 	var lean_side := -clampf(_turn_rate * speed * 0.05, -0.28, 0.28) * (1.0 - p)
 	var lean_fwd := -clampf(_accel, -4.0, 4.0) * 0.025 * (1.0 - p)
+	# Hard stops and vault landings sink the body on a spring; it dips, catches
+	# itself, and rises back — the knees visibly taking the weight.
+	var dip := clampf(_dip_sp.track(clampf(-_accel * 0.03, 0.0, 0.12), 0.1, dt), -0.04, 0.2) * (1.0 - p)
 	if walking_wounded:
 		# A limp: the body dips and rolls onto the good leg once per stride,
 		# shoulders hunched over the wound.
@@ -778,24 +890,49 @@ func _body_pose(speed: float, dt: float, map: BattleMap) -> void:
 		spine -= 0.1 * (1.0 - p)
 	var cl := sw * moving
 
-	_q[B.ROOT] = _qe(-PI * 0.5 * p + lean_fwd, 0.08 * cl * p, lean_side + sway)
-	_q[B.HIPS] = _qe(0.0, hips_yaw, 0.0)
-	var sp := lerpf(spine, 0.2, p)
+	# The pelvis rolls with each pull of the crawl; the torso pitch follows the staged
+	# `pitch`, so the chest is the last thing down and the first thing up.
+	_q[B.ROOT] = _qe(-PI * 0.5 * pitch + lean_fwd, 0.08 * cl * p, lean_side + sway)
+	# Hips roll onto the stance leg; the chest counter-rolls and the head stays level
+	# against the body's lean, the way a walking body actually stacks itself.
+	_q[B.HIPS] = _qe(0.0, hips_yaw, cl * (0.04 * (1.0 - p) + 0.1 * p))
+	var sp := lerpf(spine, 0.2, pitch)
+	if rising:
+		# Push-up arch: on the way up the chest leads, back extended off the ground.
+		sp -= 0.45 * sin(PI * smoothstep(0.45, 1.0, p))
 	_q[B.SPINE] = _qe(sp * 0.5, -hips_yaw * 0.6, 0.0)
-	_q[B.CHEST] = _qe(sp * 0.5, -hips_yaw * 0.7 + 0.15 * _aim_blend * (1.0 - p), 0.0)
-	_q[B.HEAD] = _qe(lerpf(head, 0.9, p), look - 0.15 * _aim_blend * (1.0 - p), 0.0)
+	_q[B.CHEST] = _qe(sp * 0.5, -hips_yaw * 0.7 + 0.15 * _aim_blend * (1.0 - p), -cl * 0.05 * (1.0 - p))
+	_q[B.HEAD] = _qe(lerpf(head, 0.9, pitch), look - 0.15 * _aim_blend * (1.0 - p), -(lean_side + sway) * 0.55 * (1.0 - p))
 	_q[B.BASE] = Quaternion.IDENTITY
 
 	if p > 0.02 or (c > 0.6 and speed < 0.25):
+		_legs_mode = 0
 		var bob0 := -(1.0 - cos(2.0 * _phase)) * 0.025 * moving
-		_root_pos = Vector3(0.0, (bob0 - c * lerpf(0.32, 0.5, still)) * (1.0 - p) + 0.22 * p, 0.95 * p)
-		_legs_scripted(p, c, still, moving, run)
+		# A crawl is not a glide: the body surges forward with each pull and almost
+		# stops between, lifting slightly onto the elbows as it pulls.
+		var surge := sin(2.0 * _phase) * 0.045 * moving * p
+		var lift := (1.0 - cos(2.0 * _phase)) * 0.015 * moving * p
+		# The hips are the anchor of the transition, pivoting over the knees: their
+		# height runs flat -> all-fours -> kneel -> stand on `sink`, their forward
+		# position comes home on the same curve, and the root is derived by removing
+		# the pitched hip offset. (Moving the root directly levers the body up around
+		# the feet like a drawbridge — the "jumping up" look.)
+		var hr := _offsets[B.HIPS].y
+		var pr := PI * 0.5 * pitch
+		var hips_y := lerpf(hr + bob0 - c * lerpf(0.32, 0.5, still), 0.22 + lift, sink)
+		var hips_z := (0.95 - hr) * sink + surge
+		_root_pos = Vector3(0.0, hips_y - hr * cos(pr) - dip, hips_z + hr * sin(pr))
+		# While the hips are low with the legs no longer back (all-fours, kneel) the
+		# legs must fold completely — knees under him — or the shins stab the ground.
+		var ck := maxf(c, minf(1.0, sink * (1.0 - legs_back) * 1.2))
+		_legs_scripted(legs_back, ck, still, moving, run)
 		_feet_ready = false
 	else:
+		_legs_mode = 1
 		# The body sinks a little as each foot passes under it, rides lower at a
 		# crouch, and shifts its weight over the stance foot.
 		var bob := -(1.0 - cos(2.0 * _phase)) * 0.028 * moving * (1.0 + 0.6 * run)
-		_root_pos = Vector3(sin(_phase) * 0.035 * moving, bob - 0.05 - crouch * 0.33, 0.0)
+		_root_pos = Vector3(sin(_phase) * 0.035 * moving, bob - 0.05 - crouch * 0.33 - dip, 0.0)
 		_legs_ik(speed, run, dt, map)
 
 
@@ -948,7 +1085,7 @@ func _chest_t() -> Transform3D:
 
 
 ## Places the weapon for his stance, then bends both arms onto it.
-func _hands_on_weapon(speed: float) -> void:
+func _hands_on_weapon(speed: float, dt: float) -> void:
 	# (relax state advanced in animate; this reads _relax, _fidget and carry_style)
 	var run := clampf((speed - 1.6) / 2.4, 0.0, 1.0)
 	var w := _pose_t(W_LOW)
@@ -968,7 +1105,7 @@ func _hands_on_weapon(speed: float) -> void:
 	w = _lerp_t(w, relax_pose, _relax * (1.0 - run))
 	w = _lerp_t(w, _pose_t(W_PORT), run * (1.0 - _aim_blend))
 	w = _lerp_t(w, _pose_t(W_AIM_RPG if weapon == "rpg" else W_AIM), _aim_blend)
-	w = _lerp_t(w, _pose_t(W_PRONE), prone)
+	w = _lerp_t(w, _pose_t(W_PRONE), _prone_vis)
 	if cowering:
 		w = _pose_t(W_COWER)
 	if slung:
@@ -981,7 +1118,11 @@ func _hands_on_weapon(speed: float) -> void:
 	w.origin += w.basis.z * 0.05 * _recoil
 	w.basis = w.basis * Basis(Vector3.RIGHT, 0.08 * _recoil)
 	if prone > 0.5 and speed > 0.2:
-		w.origin += Vector3(0.0, sin(_phase) * 0.05, 0.0)
+		# Crawl cradle: the rifle works forward in pulses, riding the alternating
+		# elbows and rolling with the pelvis, so the arms visibly do the crawling.
+		var pull := maxf(0.0, sin(2.0 * _phase))
+		w.origin += Vector3(sin(_phase) * 0.025, (1.0 - cos(2.0 * _phase)) * 0.02, -pull * 0.05)
+		w.basis = w.basis * Basis(Vector3.BACK, sin(_phase) * 0.1)
 	# The weapon is never frozen: slow personal sway, a bounce with the stride, and
 	# the occasional grip-shift dipping the muzzle while the hand checks the magazine.
 	var steady := 1.0 - _aim_blend * 0.75
@@ -991,13 +1132,25 @@ func _hands_on_weapon(speed: float) -> void:
 	w.basis = w.basis * Basis(Vector3.RIGHT, sin(_clock * 1.1 + _sway_seed) * 0.035 * steady)
 	var fidget_amp := sin(PI * clampf(1.0 - _fidget, 0.0, 1.0)) if _fidget > 0.0 else 0.0
 	w.basis = w.basis * Basis(Vector3.RIGHT, -0.22 * fidget_amp)
+	# FPS-style weapon lag: turning drags the muzzle a hair behind the body's yaw,
+	# accelerating eases the weapon back towards the chest, and the whole carried pose
+	# chases its target on a short spring — so carry changes flow instead of switching.
+	w.basis = w.basis.rotated(Vector3.UP, -clampf(_turn_rate * 0.045, -0.1, 0.1) * steady)
+	w.origin.z += clampf(_accel * 0.005, -0.025, 0.025) * steady
+	if dt > 0.0:
+		if not _w_sp_init:
+			_w_sp_init = true
+			_w_sp_pos.set_to(w.origin)
+			_w_sp_rot.set_to(Quaternion(w.basis.orthonormalized()))
+		w.origin = _w_sp_pos.track(w.origin, 0.05, dt)
+		w.basis = Basis(_w_sp_rot.track(Quaternion(w.basis.orthonormalized()), 0.05, dt))
 	_q[B.WEAPON] = Quaternion(w.basis.orthonormalized())
 	_w_pos = w.origin
 	var chest := _chest_t()
 	var wt := chest * w
 	var s := MeshFactory.SOLDIER_SCALE
 	_muzzle_sk = wt * (Vector3(_points["muzzle"]) * s)
-	var p := prone
+	var p := _prone_vis
 	var pole_r := Vector3(0.7, -0.6, 0.4).lerp(Vector3(0.6, 0.0, -1.0), p)
 	var pole_l := Vector3(-0.5, -0.8, 0.0).lerp(Vector3(-0.6, 0.0, -1.0), p)
 	if not hand_targets.is_empty():
@@ -1176,5 +1329,8 @@ func _animate_dead(dt: float, map: BattleMap) -> void:
 func _apply() -> void:
 	for i in BONE_COUNT:
 		_skel.set_bone_pose_rotation(i, _q[i])
+		_last_q[i] = _q[i]
 	_skel.set_bone_pose_position(B.ROOT, _root_pos)
 	_skel.set_bone_pose_position(B.WEAPON, _w_pos)
+	_last_root = _root_pos
+	_last_w = _w_pos
