@@ -126,7 +126,7 @@ func _build_trees(map: BattleMap) -> void:
 			var v := 3 if rng.randf() < 0.15 else rng.randi() % 3
 			var p := map.cell_to_world(Vector2i(x, y)) + Vector3(rng.randf_range(-0.7, 0.7), 0.0, rng.randf_range(-0.7, 0.7))
 			p.y = map.height_at(p)
-			var s := rng.randf_range(0.8, 1.3)
+			var s := rng.randf_range(0.85, 1.25)
 			var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(s, s * rng.randf_range(0.9, 1.15), s))
 			xforms[v].append(Transform3D(basis, p))
 	for v in 4:
@@ -138,6 +138,9 @@ func _build_scatter(map: BattleMap) -> void:
 	rng.seed = 99
 	var bushes: Array = []
 	var bags: Array = []
+	var craters: Array = []
+	for v in MeshFactory.CRATER_VARIANTS:
+		craters.append([])
 	for y in BattleMap.H:
 		for x in BattleMap.W:
 			var t: int = map.cells[y * BattleMap.W + x]
@@ -148,11 +151,32 @@ func _build_scatter(map: BattleMap) -> void:
 				var s := rng.randf_range(0.7, 1.4)
 				bushes.append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), p))
 			elif t == BattleMap.T.TRENCH and y > 0 and map.cells[(y - 1) * BattleMap.W + x] != BattleMap.T.TRENCH and rng.randf() < 0.6:
-				var q := p + Vector3(0.0, 0.0, -1.0)
-				q.y = map.height_at(q + Vector3(0.0, 0.0, -0.8))
+				# Parapet on the spoil-berm crest along the enemy-facing lip.
+				var q := p + Vector3(0.0, 0.0, -3.0)
+				q.y = map.height_at(q) + 0.02
 				bags.append(Transform3D(Basis(Vector3.UP, rng.randf_range(-0.15, 0.15)), q))
+			elif t == BattleMap.T.CRATER and rng.randf() < 0.45:
+				# Rim-and-scorch meshes dress the dimpled shell holes.
+				p += Vector3(rng.randf_range(-0.6, 0.6), 0.0, rng.randf_range(-0.6, 0.6))
+				p.y = map.height_at(p) + 0.04
+				var cs := rng.randf_range(0.55, 0.95)
+				var cb := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * cs)
+				craters[rng.randi() % MeshFactory.CRATER_VARIANTS].append(Transform3D(cb, p))
 	_multimesh(MeshFactory.bush(), bushes)
 	_multimesh(MeshFactory.sandbags(), bags)
+	for v in MeshFactory.CRATER_VARIANTS:
+		_multimesh(MeshFactory.crater(v), craters[v])
+
+
+## A fresh shell hole at runtime, sized by the blast that dug it.
+func spawn_crater(pos: Vector3, blast_radius := 4.0) -> void:
+	var mi := MeshInstance3D.new()
+	mi.mesh = MeshFactory.crater()
+	add_child(mi)
+	var s := clampf(blast_radius * 0.2, 0.6, 1.4) * randf_range(0.85, 1.15)
+	mi.scale = Vector3(s, s * randf_range(0.85, 1.1), s)
+	mi.position = pos + Vector3.UP * 0.02
+	mi.rotation.y = randf() * TAU
 
 
 func _multimesh(mesh: Mesh, list: Array) -> void:

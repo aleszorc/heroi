@@ -788,24 +788,46 @@ static func _bradley(h: Builder, t: Builder) -> Dictionary:
 
 # --- Scenery ---
 
-## Variants 0-2 are leafy late-autumn trees, 3 is a shell-shattered stump.
+## Windbreak trees at real posadka scale (8-15 m with instance scaling), so they tower
+## over the 25%-oversize soldiers the way a treeline should. Variant 0 is a Lombardy
+## poplar column (~11.5 m), 1 a broad black-locust acacia (~8.7 m), 2 a rounded field
+## maple (~7.7 m), 3 a shell-shattered stump (~3.9 m).
 static func tree(variant: int) -> ArrayMesh:
 	var key := "tree_%d" % variant
 	if _cache.has(key):
 		return _cache[key]
 	var b := Builder.new()
 	var bark := Color(0.27, 0.22, 0.17)
-	if variant == 3:
-		b.cyl(0.14, 0.22, 1.9, Vector3(0.0, 0.95, 0.0), bark)
-		b.cyl(0.05, 0.12, 1.4, Vector3(0.35, 1.9, 0.0), bark, Vector3(0.0, 0.0, -0.7))
-		b.cyl(0.04, 0.09, 0.9, Vector3(-0.25, 2.0, 0.1), bark, Vector3(0.3, 0.0, 0.6))
-	else:
-		var leaves: Array[Color] = [Color(0.40, 0.41, 0.20), Color(0.50, 0.43, 0.19), Color(0.34, 0.37, 0.21)]
-		var leaf := leaves[variant]
-		b.cyl(0.11, 0.2, 3.2, Vector3(0.0, 1.6, 0.0), bark)
-		b.ball(1.5, Vector3(0.0, 3.7, 0.0), leaf, Vector3(1.0, 0.9, 1.0))
-		b.ball(1.1, Vector3(0.7, 4.3, 0.3), leaf.lightened(0.06), Vector3.ONE, 5)
-		b.ball(1.0, Vector3(-0.6, 3.3, -0.4), leaf.darkened(0.08), Vector3.ONE, 5)
+	match variant:
+		3:
+			# Snapped bole with splintered top and two hanging broken limbs.
+			b.cyl(0.15, 0.28, 3.4, Vector3(0.0, 1.7, 0.0), bark)
+			b.cyl(0.02, 0.12, 1.1, Vector3(0.1, 3.85, 0.05), bark.lightened(0.12), Vector3(0.1, 0.0, -0.25), 5)
+			b.cyl(0.01, 0.09, 0.7, Vector3(-0.12, 3.6, -0.08), bark.lightened(0.08), Vector3(-0.2, 0.0, 0.35), 5)
+			b.cyl(0.05, 0.11, 2.2, Vector3(0.9, 2.6, 0.2), bark, Vector3(0.0, 0.0, -1.1), 5)
+			b.cyl(0.04, 0.08, 1.4, Vector3(-0.6, 2.9, 0.3), bark, Vector3(0.5, 0.0, 0.8), 5)
+		0:
+			# Lombardy poplar: the classic windbreak column.
+			var leaf := Color(0.40, 0.41, 0.20)
+			b.cyl(0.14, 0.26, 3.4, Vector3(0.0, 1.7, 0.0), bark)
+			b.ball(1.45, Vector3(0.0, 4.9, 0.0), leaf, Vector3(1.0, 1.75, 1.0), 7, 4)
+			b.ball(1.2, Vector3(0.15, 7.6, -0.1), leaf.lightened(0.05), Vector3(0.95, 1.7, 0.95), 6, 3)
+			b.ball(0.8, Vector3(-0.1, 10.0, 0.08), leaf.darkened(0.04), Vector3(0.9, 1.9, 0.9), 6, 3)
+		1:
+			# Black locust (acacia): tall bare trunk, broad loose crown.
+			var leaf := Color(0.50, 0.43, 0.19)
+			b.cyl(0.16, 0.3, 4.6, Vector3(0.0, 2.3, 0.0), bark)
+			b.cyl(0.08, 0.14, 2.2, Vector3(0.7, 4.8, 0.3), bark, Vector3(0.15, 0.0, -0.5), 5)
+			b.ball(2.0, Vector3(0.0, 6.0, 0.0), leaf, Vector3(1.05, 0.9, 1.0), 7, 4)
+			b.ball(1.5, Vector3(1.3, 7.2, 0.5), leaf.lightened(0.06), Vector3.ONE, 6, 3)
+			b.ball(1.3, Vector3(-1.2, 7.0, -0.5), leaf.darkened(0.07), Vector3.ONE, 6, 3)
+		_:
+			# Field maple / young acacia: rounded crown on a short trunk.
+			var leaf := Color(0.34, 0.37, 0.21)
+			b.cyl(0.13, 0.24, 3.8, Vector3(0.0, 1.9, 0.0), bark)
+			b.ball(1.8, Vector3(0.0, 5.3, 0.0), leaf, Vector3(1.0, 0.95, 1.0), 7, 4)
+			b.ball(1.3, Vector3(0.9, 6.4, 0.4), leaf.lightened(0.06), Vector3.ONE, 6, 3)
+			b.ball(1.15, Vector3(-0.8, 4.6, -0.5), leaf.darkened(0.08), Vector3.ONE, 6, 3)
 	var mesh := b.build()
 	_cache[key] = mesh
 	return mesh
@@ -841,23 +863,76 @@ static func bush() -> ArrayMesh:
 	if _cache.has("bush"):
 		return _cache["bush"]
 	var b := Builder.new()
-	b.ball(0.7, Vector3(0.0, 0.35, 0.0), Color(0.36, 0.37, 0.2), Vector3(1.0, 0.7, 1.0), 5)
-	b.ball(0.5, Vector3(0.5, 0.3, 0.2), Color(0.42, 0.38, 0.2), Vector3(1.0, 0.7, 1.0), 5)
+	b.ball(0.85, Vector3(0.0, 0.5, 0.0), Color(0.36, 0.37, 0.2), Vector3(1.0, 0.75, 1.0), 5)
+	b.ball(0.6, Vector3(0.6, 0.4, 0.25), Color(0.42, 0.38, 0.2), Vector3(1.0, 0.72, 1.0), 5)
 	var mesh := b.build()
 	_cache["bush"] = mesh
 	return mesh
 
 
-static func crater() -> ArrayMesh:
-	if _cache.has("crater"):
-		return _cache["crater"]
+const CRATER_VARIANTS := 4
+
+## Shell crater: an irregular, slightly elliptical raised lip of thrown-up earth around
+## a dished interior that grades from disturbed-earth rim through scorched wall to a
+## charred centre. The mesh sits ON the ground (runtime craters cannot re-dig the ground
+## mesh), so the lip and the dark grading carry the depth. `variant` picks one of
+## CRATER_VARIANTS footprints (rim radius ~1.2-2.4 m); -1 picks one at random.
+static func crater(variant := -1) -> ArrayMesh:
+	if variant < 0:
+		variant = randi() % CRATER_VARIANTS
+	var key := "crater_%d" % variant
+	if _cache.has(key):
+		return _cache[key]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4700 + variant
+	var r: float = [1.2, 1.6, 2.0, 2.4][variant]
+	var lip := 0.16 + r * 0.07
+	var n := 10
+	var ex := rng.randf_range(0.82, 1.2)
+	var rim := PackedVector2Array()
+	var outer := PackedVector2Array()
+	var floor_pts := PackedVector2Array()
+	var jig := PackedFloat32Array()
+	for k in n:
+		jig.append(rng.randf_range(0.78, 1.22))
+	for k in n:
+		var a := (k + 0.5) * TAU / n
+		var dir := Vector2(sin(a) * ex, cos(a))
+		rim.append(dir * r * jig[k])
+		outer.append(dir * (r * jig[k] + rng.randf_range(0.5, 0.9)))
+		# Offset jitter index: the floor ring is irregular in its own way, not a copy.
+		floor_pts.append(dir * r * jig[(k + 3) % n] * 0.4)
+	var earth := Color(0.35, 0.28, 0.20)
+	var wall := Color(0.21, 0.17, 0.13)
+	var charred := Color(0.11, 0.095, 0.085)
 	var b := Builder.new()
-	b.cyl(1.6, 1.6, 0.06, Vector3(0.0, 0.03, 0.0), Color(0.18, 0.15, 0.12), Vector3.ZERO, 8)
-	for i in 7:
-		var a := i * TAU / 7.0
-		b.box(Vector3(0.6, 0.25, 0.4), Vector3(cos(a) * 1.8, 0.1, sin(a) * 1.8), Color(0.33, 0.27, 0.2), Vector3(0.0, -a, 0.0))
+	var centre := Vector3(0.0, 0.02, 0.0)
+	for k in n:
+		var j := (k + 1) % n
+		var ok := Vector3(outer[k].x, 0.0, outer[k].y)
+		var oj := Vector3(outer[j].x, 0.0, outer[j].y)
+		var rk := Vector3(rim[k].x, lip, rim[k].y)
+		var rj := Vector3(rim[j].x, lip, rim[j].y)
+		var fk := Vector3(floor_pts[k].x, 0.04, floor_pts[k].y)
+		var fj := Vector3(floor_pts[j].x, 0.04, floor_pts[j].y)
+		# Outer spoil skirt, in subtly varying earth shades.
+		var skirt := earth.darkened(0.06 * (k % 3))
+		var out_dir := (ok + oj) * 0.5 + Vector3.UP
+		b.tri(ok, oj, rj, out_dir, skirt)
+		b.tri(ok, rj, rk, out_dir, skirt)
+		# Inner wall down from the lip, then the charred floor fan.
+		b.tri(rk, rj, fj, Vector3.UP, wall.darkened(0.05 * (k % 2)))
+		b.tri(rk, fj, fk, Vector3.UP, wall)
+		b.tri(fk, fj, centre, Vector3.UP, charred)
+	# Clods of earth thrown onto the rim.
+	for k in 6:
+		var a := rng.randf() * TAU
+		var d := Vector2(sin(a) * ex, cos(a)) * r * rng.randf_range(0.95, 1.35)
+		b.box(Vector3(rng.randf_range(0.22, 0.5), rng.randf_range(0.12, 0.2), rng.randf_range(0.18, 0.35)),
+				Vector3(d.x, lip * rng.randf_range(0.3, 0.8), d.y),
+				earth.darkened(rng.randf_range(0.0, 0.12)), Vector3(0.0, rng.randf() * TAU, 0.0))
 	var mesh := b.build()
-	_cache["crater"] = mesh
+	_cache[key] = mesh
 	return mesh
 
 

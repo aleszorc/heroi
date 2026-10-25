@@ -292,14 +292,6 @@ func exhaust(pos: Vector3) -> void:
 	puffs.smoke.emit(pos, Vector3.UP * 1.0, randf_range(1.0, 1.8), 0.3, 1.2, _grey(0.15, 0.22, 0.8), 1.0, 0.8)
 
 
-func crater(pos: Vector3) -> void:
-	var mi := MeshInstance3D.new()
-	mi.mesh = MeshFactory.crater()
-	add_child(mi)
-	mi.global_position = pos + Vector3.UP * 0.02
-	mi.rotation.y = randf() * TAU
-
-
 ## A smoke grenade: a thick billowing burst, then the canister keeps feeding the cloud.
 func smoke_screen(pos: Vector3, duration: float) -> void:
 	_emitters.append({"kind": "smoke", "pos": pos, "until": _time + duration, "acc": 0.0, "start": _time})

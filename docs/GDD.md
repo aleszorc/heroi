@@ -53,7 +53,8 @@ Campaign map ─► Briefing & deployment ─► Battle (real-time, pausable) �
 | Rubble | .50 | .50 | 1.6 | 3.0 | .85 |
 | Wreck | .60 | .50 | 1.3 | impassable | .5 |
 
-- Big explosions create new craters at runtime, so cover changes as the battle goes on.
+- Trenches are dug to standing depth — about 1.7 m of real digging, drawn 2.1 world units deep to match the soldiers' 1.25× scale, with a low spoil berm on the lip — so a standing soldier is roughly head-level with the ground. Gullies sink 1.4; craters dimple 0.4–1.0 depending on how densely they cluster.
+- Big explosions create new craters at runtime, so cover changes as the battle goes on. The painted footprint and the crater model scale with the blast radius.
 - Smoke grenades cut visibility to 30% per cell crossed for about 35 s.
 
 ### 3.2 Units
@@ -269,7 +270,7 @@ Planned:
 
 - **Diorama low-poly.** Every model is built in code from primitives, flat-shaded, vertex-coloured, one mesh per object. That means tiny builds, a single draw call per object, and no texture memory.
 - **Palette:** late-autumn steppe. Olive grass, ploughed brown fields, ochre and olive poplars and acacias, grey-white plaster and red-brick ruins. Saturation is held around 0.9.
-- **Readability over realism:** soldiers drawn 25% oversize, blue or red team discs, yellow tape on Ukrainian soldiers and red on Russian (both real practice), white crosses on Ukrainian vehicles, cope cages on Russian tanks.
+- **Readability over realism:** soldiers drawn 25% oversize, blue or red team discs, yellow tape on Ukrainian soldiers and red on Russian (both real practice), white crosses on Ukrainian vehicles, cope cages on Russian tanks. Everything else stays real scale so the soldiers read against it: treeline poplars and acacias stand 7–14 m (real posadka height), vehicles, poles and houses are true size.
 - **Effects:** tracers, rocket and missile smoke trails, flash plus smoke plus dirt explosions, persistent burning wrecks, craters.
 
 ## 6. Audio direction (next milestone)

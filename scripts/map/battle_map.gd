@@ -166,9 +166,10 @@ func paint_disc(center: Vector2, r: float, t: int, only_on: Array = []) -> void:
 			set_cell(cc, t)
 
 
-## Turns open ground hit by a big explosion into crater cover.
-func mark_crater(p: Vector3) -> void:
-	paint_disc(Vector2(p.x, p.z), 1.5, T.CRATER, [T.OPEN, T.FIELD, T.ROAD])
+## Turns open ground hit by a big explosion into crater cover; `r` scales the
+## footprint with the blast.
+func mark_crater(p: Vector3, r := 1.5) -> void:
+	paint_disc(Vector2(p.x, p.z), r, T.CRATER, [T.OPEN, T.FIELD, T.ROAD])
 
 
 func add_smoke(p: Vector3, r: float, duration: float) -> void:
@@ -215,10 +216,17 @@ func _apply_cost(c: Vector2i) -> void:
 		_astar_veh.set_point_weight_scale(c, cv)
 
 
-## Corner heights: trenches and gullies are sunk into the ground, craters dimple it.
+## Trench floor sink in world units: ~1.7 m of real digging drawn at the soldiers'
+## 1.25x scale, so a standing man is roughly head-level with the ground.
+const TRENCH_DEPTH := 2.1
+
+## Corner heights: trenches sink to standing depth with a spoil berm on the lip,
+## gullies are sunk, craters dimple the ground deeper the denser they cluster.
 func _build_heights() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
+	var floors := PackedByteArray()
+	floors.resize((W + 1) * (H + 1))
 	for y in H + 1:
 		for x in W + 1:
 			var trench := 0
@@ -239,10 +247,26 @@ func _build_heights() -> void:
 			if gully >= 2:
 				h -= 1.4
 			elif trench >= 2:
-				h = -0.9
+				h = -TRENCH_DEPTH + rng.randf_range(-0.08, 0.08)
+				floors[y * (W + 1) + x] = 1
 			elif crater >= 1:
-				h -= 0.35
+				h -= 0.25 + 0.17 * crater + rng.randf_range(0.0, 0.1)
 			heights[y * (W + 1) + x] = h
+	# Spoil berm: ground-level corners beside a trench floor rise into a low lip,
+	# so the parapet reads from the camera and the wall is a clean steep bank.
+	for y in H + 1:
+		for x in W + 1:
+			var i := y * (W + 1) + x
+			if floors[i] == 1 or heights[i] < -0.6:
+				continue
+			for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
+				var nx := x + d.x
+				var ny := y + d.y
+				if nx < 0 or ny < 0 or nx > W or ny > H:
+					continue
+				if floors[ny * (W + 1) + nx] == 1:
+					heights[i] += rng.randf_range(0.22, 0.34)
+					break
 
 
 func corner_height(x: int, y: int) -> float:
