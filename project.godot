@@ -4,11 +4,14 @@ config_version=5
 
 [application]
 
-config/name="Posadka"
+config/name="Heroi"
 config/description="Mobile isometric tactics set in the Russo-Ukrainian war."
 run/main_scene="res://scenes/main.tscn"
 config/features=PackedStringArray("4.7", "Mobile")
-config/icon="res://icon.png"
+boot_splash/bg_color=Color(0.0784314, 0.0941176, 0.0588235, 1)
+boot_splash/image="res://assets/branding/splash.png"
+boot_splash/fullsize=true
+config/icon="res://assets/branding/icon.png"
 
 [autoload]
 
