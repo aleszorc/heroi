@@ -1,0 +1,786 @@
+class_name InfantryUnit
+extends Unit
+## A squad or team. A leader point follows the path, the soldiers steer after it in loose
+## formation, and on halting each man picks cover against the threat and a fitting stance.
+##
+## Men also act on their own: in contact the moving fire team sprints man by man to its
+## next cover; riflemen lob grenades at close enemies; and when someone goes down wounded,
+## the nearest free comrade runs over, drags him into cover and gives first aid.
+
+const SMOKE_RANGE := 40.0
+## How often a halted squad re-checks that its cover still faces the threat.
+const COVER_RECHECK := 5.0
+## Bounding overwatch: one fire team rushes this far while the other covers it.
+const BOUND_LENGTH := 12.0
+const TRAIL_SPACING := 0.5
+const TRAIL_MAX := 240
+## Hits that wound rather than kill: bullets, explosions.
+const WOUND_CHANCE_BULLET := 0.5
+const WOUND_CHANCE_BLAST := 0.35
+const RESCUE_RANGE := 45.0
+const FIRST_AID_TIME := 8.0
+const DRAG_SPEED := 0.9
+const GRENADE_MIN := 8.0
+const GRENADE_MAX := 30.0
+const GRENADE_COOLDOWN := 8.0
+
+var members: Array[Soldier] = []
+## Where danger comes from: the nearest known enemy, or straight ahead.
+var threat := Vector3.ZERO
+var _threat_tick := 0.0
+var _cover_threat := Vector3.ZERO
+var _cover_age := 0.0
+## Breadcrumbs of where the leader point has walked, oldest first. Men follow this
+## trail rather than rigid slots, so the squad snakes around obstacles like a real file.
+var _trail := PackedVector3Array()
+var _bounding := false
+var _moving_team := 0
+var _bound_left := 0.0
+var _bound_pause := 0.0
+## Leader point velocity, fed forward to the men so they match the squad's pace
+## instead of chasing their places and stopping.
+var _leader_vel := Vector3.ZERO
+var _contact := false
+var _next_grenade := 0.0
+
+
+func _build() -> void:
+	var men: Array = def["men"]
+	var n := men.size()
+	threat = position + forward() * 60.0
+	for i in n:
+		var s := Soldier.new()
+		battle.units_root.add_child(s)
+		s.setup(side, String(men[i]))
+		s.fx = battle.fx
+		s.slot = Vector2((i - (n - 1) * 0.5) * 2.6, (i % 2) * 1.8 + randf_range(-0.4, 0.4))
+		s.facing = heading
+		s.aim_yaw = heading
+		s.rotation.y = heading
+		s.cooldown = randf_range(0.0, 1.5)
+		s.pace = randf_range(0.93, 1.07)
+		s.team = i % 2
+		members.append(s)
+	_place_in_cover()
+
+
+func alive_count() -> int:
+	var n := 0
+	for s in members:
+		if s.alive:
+			n += 1
+	return n
+
+
+func total_count() -> int:
+	return members.size()
+
+
+func _slot_offset(slot: Vector2) -> Vector3:
+	var right := Vector3(cos(heading), 0.0, -sin(heading))
+	return right * slot.x - forward() * slot.y
+
+
+func _take_cover() -> void:
+	var taken := {}
+	_cover_threat = threat
+	_cover_age = 0.0
+	for s in members:
+		if s.alive:
+			s.cover_pos = map.best_cover_near(position + _slot_offset(s.slot) * 0.8, 2, taken, threat)
+
+
+## Puts everyone straight into cover and stance (deployment, spawning).
+func _place_in_cover() -> void:
+	if not map.is_passable(position, false):
+		var c := map.best_cover_near(position, 3, {})
+		position = Vector3(c.x, map.height_at(c), c.z)
+	_take_cover()
+	for s in members:
+		if s.alive:
+			s.position = Vector3(s.cover_pos.x, map.height_at(s.cover_pos), s.cover_pos.z)
+			s.vel = Vector3.ZERO
+			s.reset_gait()
+			_choose_stance(s, true)
+			s.snap_stance()
+			s.animate(0.0, battle.time, map)
+
+
+func teleport(p: Vector3) -> void:
+	super.teleport(p)
+	order_stop()
+	_place_in_cover()
+
+
+func conceal_value() -> float:
+	var c := super.conceal_value()
+	var low := 0.0
+	var n := 0
+	for s in members:
+		if s.alive:
+			low += s.prone * 0.12 + s.crouch * 0.05
+			n += 1
+	return minf(0.95, c + (low / n if n > 0 else 0.0))
+
+
+func _speed() -> float:
+	if state == State.PANICKED or state == State.ROUTED:
+		return Soldier.RUN_SPEED
+	var s := Soldier.WALK_SPEED
+	match order:
+		Order.FAST:
+			s = Soldier.RUN_SPEED
+		Order.SNEAK:
+			s = Soldier.CROUCH_SPEED
+	# Under fire, anything short of a sprint becomes a crawl.
+	if state == State.SUPPRESSED and order != Order.FAST:
+		s = Soldier.CRAWL_SPEED
+	return s * map.speed_factor(position, false)
+
+
+## Distance of the furthest-behind man from his formation slot.
+func _max_lag() -> float:
+	var lag := 0.0
+	for s in members:
+		if s.alive and battle.time >= s.start_at:
+			lag = maxf(lag, _flat(s.position, _trail_target(s)))
+	return lag
+
+
+func _team_lag(team: int) -> float:
+	var lag := 0.0
+	for s in members:
+		if s.alive and s.team == team:
+			lag = maxf(lag, _flat(s.position, _trail_target(s)))
+	return lag
+
+
+static func _flat(a: Vector3, b: Vector3) -> float:
+	return Vector2(a.x - b.x, a.z - b.z).length()
+
+
+## New move order: face the way, pick a formation, and let the men set off one by one.
+func _on_path_set(_target: Vector3) -> void:
+	var first := path[0]
+	var dir := Vector3(first.x - position.x, 0.0, first.z - position.z)
+	if dir.length() > 0.5:
+		heading = yaw_to(dir)
+	_trail = PackedVector3Array([position])
+	var t := map.type_at(position)
+	var column := order == Order.FAST or order == Order.SNEAK or t == BattleMap.T.TREES or t == BattleMap.T.TRENCH or t == BattleMap.T.BUILDING
+	_set_formation(column)
+	_bounding = false
+	_moving_team = 0
+	_bound_left = BOUND_LENGTH
+	for s in members:
+		s.start_at = battle.time + randf_range(0.1, 0.9)
+		s.rush_pos = Vector3.INF
+		_cancel_task(s)
+
+
+## Wedge in the open (point man leading, wings echeloned back); staggered column for
+## running, sneaking, or setting off from trees, trenches and buildings.
+func _set_formation(column: bool) -> void:
+	var k := 0
+	for s in members:
+		if not s.alive:
+			continue
+		if column:
+			s.slot = Vector2(1.2 if k % 2 == 0 else -1.2, 1.0 + k * 2.8)
+			s.team = k % 2
+		else:
+			var rank := (k + 1) / 2
+			var side := -1.0 if k % 2 == 1 else 1.0
+			s.slot = Vector2(0.0 if k == 0 else side * rank * 2.6, 1.0 + rank * 2.6)
+			s.team = 0 if k == 0 or side < 0.0 else 1
+		k += 1
+
+
+## Position and travel direction d metres back along the leader's trail, extended
+## straight back past its start.
+func _trail_sample(d: float) -> Array:
+	var tangent := forward()
+	var prev := position
+	var remaining := d
+	for i in range(_trail.size() - 1, -1, -1):
+		var q := _trail[i]
+		var seg := _flat(prev, q)
+		if seg > 0.001:
+			tangent = Vector3(prev.x - q.x, 0.0, prev.z - q.z) / seg
+			if seg >= remaining:
+				return [prev - tangent * remaining, tangent]
+			remaining -= seg
+		prev = q
+	return [prev - tangent * remaining, tangent]
+
+
+## Where a man should be in the moving formation. A man already ahead of his place
+## does not walk back: he waits for the file to reach him and falls in.
+func _trail_target(s: Soldier) -> Vector3:
+	var sample := _trail_sample(s.slot.y)
+	var p: Vector3 = sample[0]
+	var t: Vector3 = sample[1]
+	var goal := p + Vector3(-t.z, 0.0, t.x) * s.slot.x
+	if not map.is_passable(goal, false):
+		goal = p
+	var ahead := (s.position - goal).dot(t)
+	if ahead > 0.5:
+		goal += t * ahead
+	return goal
+
+
+func _in_contact() -> bool:
+	for u in battle.units:
+		if u.side != side and u.is_targetable() and battle.time - u.last_seen[side] < 10.0 \
+				and u.known_pos[side].distance_to(position) < 220.0:
+			return true
+	return false
+
+
+## Starts a bound: the covering team holds where it is (in the cover it rushed to), and
+## each man of the moving team picks his own cover spot a bound further along the route.
+func _start_holds() -> void:
+	var taken := {}
+	var ahead := _point_along_path(BOUND_LENGTH)
+	var dir := Vector3(ahead.x - position.x, 0.0, ahead.z - position.z)
+	var yaw := yaw_to(dir) if dir.length() > 0.5 else heading
+	var right := Vector3(cos(yaw), 0.0, -sin(yaw))
+	var fwd := Vector3(-sin(yaw), 0.0, -cos(yaw))
+	for s in members:
+		if not s.alive:
+			continue
+		if s.team != _moving_team:
+			s.hold_pos = s.rush_pos if s.rush_pos != Vector3.INF else map.best_cover_near(s.position, 1, taken, threat)
+		else:
+			var spot := ahead + right * s.slot.x - fwd * s.slot.y * 0.5
+			s.rush_pos = map.best_cover_near(spot, 2, taken, threat)
+
+
+## Point dist metres further along the remaining path.
+func _point_along_path(dist: float) -> Vector3:
+	var p := position
+	var left := dist
+	for i in range(path_i, path.size()):
+		var q := path[i]
+		var seg := _flat(p, q)
+		if seg >= left:
+			return p + Vector3(q.x - p.x, 0.0, q.z - p.z).normalized() * left
+		left -= seg
+		p = q
+	return p
+
+
+func _team_rush_lag(team: int) -> float:
+	var lag := 0.0
+	for s in members:
+		if s.alive and s.team == team and s.rush_pos != Vector3.INF:
+			lag = maxf(lag, _flat(s.position, s.rush_pos))
+	return lag
+
+
+func _update_threat() -> void:
+	var best := INF
+	var found := false
+	for u in battle.units:
+		if u.side == side or not u.is_targetable() or battle.time - u.last_seen[side] > 20.0:
+			continue
+		var d := u.known_pos[side].distance_to(position)
+		if d < best:
+			best = d
+			threat = u.known_pos[side]
+			found = true
+	if not found:
+		var ahead := guard_dir if is_guarding() else Vector3(0.0, 0.0, -1.0 if side == Game.UA else 1.0)
+		threat = position + ahead * 60.0
+
+
+func _sim_move(dt: float) -> void:
+	_threat_tick -= dt
+	if _threat_tick <= 0.0:
+		_threat_tick = 0.5
+		_update_threat()
+		_contact = _in_contact()
+		_assign_rescue()
+	_bleed(dt)
+	if not arrived and state != State.PINNED:
+		_advance_leader(dt)
+	elif arrived:
+		_cover_age += dt
+		if _cover_age > COVER_RECHECK:
+			_cover_age = 0.0
+			var old := (_cover_threat - position).normalized()
+			var now := (threat - position).normalized()
+			if old.dot(now) < 0.7:
+				_take_cover()
+	position.y = map.height_at(position)
+	_move_members(dt)
+
+
+## Moves the leader point along the path. In contact on a normal move the squad bounds:
+## one team rushes BOUND_LENGTH metres while the other covers, then they swap.
+func _advance_leader(dt: float) -> void:
+	var before := position
+	var contact := order == Order.MOVE and _in_contact()
+	if contact != _bounding:
+		_bounding = contact
+		_bound_left = BOUND_LENGTH
+		if _bounding:
+			_start_holds()
+	var spd := _speed()
+	if _bounding:
+		if _bound_left <= 0.0:
+			spd = 0.0
+			if _team_rush_lag(_moving_team) < 1.5:
+				_bound_pause -= dt
+				if _bound_pause <= 0.0:
+					_moving_team = 1 - _moving_team
+					_bound_left = BOUND_LENGTH
+					_bound_pause = 1.5
+					_start_holds()
+		elif _team_rush_lag(_moving_team) > 8.0:
+			spd *= 0.2
+	else:
+		# The leader eases off gradually as men fall behind, so the squad moves as one.
+		spd *= clampf(1.0 - (_max_lag() - 3.0) / 4.0, 0.25, 1.0)
+	var target := path[path_i]
+	var to := Vector3(target.x - position.x, 0.0, target.z - position.z)
+	var d := to.length()
+	var step := spd * dt
+	if d > 0.01:
+		heading = lerp_angle(heading, yaw_to(to), minf(1.0, dt * 3.0))
+	if d <= step:
+		position.x = target.x
+		position.z = target.z
+		path_i += 1
+		if path_i >= path.size():
+			_reach_end()
+	else:
+		position += to / d * step
+	_bound_left -= step
+	_leader_vel = Vector3(position.x - before.x, 0.0, position.z - before.z) / maxf(dt, 0.0001)
+	if step > 0.0:
+		last_moved = battle.time
+	if _trail.is_empty() or _flat(position, _trail[_trail.size() - 1]) >= TRAIL_SPACING:
+		_trail.append(position)
+		if _trail.size() > TRAIL_MAX:
+			_trail.remove_at(0)
+
+
+func _move_members(dt: float) -> void:
+	var stationary := arrived or state == State.PINNED
+	if stationary:
+		_leader_vel = Vector3.ZERO
+	# Weapons come up to the ready when enemies are known about, down on the sling when not.
+	var alert_now := _contact or state >= State.SUPPRESSED or battle.time - last_fired < 12.0
+	var neighbours := _nearby_soldiers()
+	var max_speed := maxf(_speed() * 1.3, 1.0)
+	for s in members:
+		if not s.alive:
+			continue
+		s.alert = alert_now
+		if s.task != "":
+			_do_task(s, dt, neighbours)
+			continue
+		s.face_point = Vector3.INF
+		s.hand_targets.clear()
+		s.slung = false
+		var goal := s.cover_pos
+		var holding := stationary
+		var feed := Vector3.ZERO
+		var speed_limit := max_speed
+		if not stationary:
+			if battle.time < s.start_at:
+				goal = s.position
+			elif _bounding and s.team != _moving_team:
+				goal = s.hold_pos
+				holding = true
+			elif _bounding and s.rush_pos != Vector3.INF:
+				# Sprint to his own next cover, crouched.
+				goal = s.rush_pos
+				speed_limit = Soldier.RUN_SPEED * 0.9
+				holding = _flat(s.position, s.rush_pos) < 0.8
+			else:
+				goal = _trail_target(s)
+				feed = _leader_vel
+		var push := Vector3.ZERO
+		for o in neighbours:
+			if o == s or not o.alive:
+				continue
+			var away := Vector3(s.position.x - o.position.x, 0.0, s.position.z - o.position.z)
+			var d := away.length()
+			var min_d := 1.1 + 0.5 * maxf(s.prone, o.prone)
+			if d < min_d and d > 0.001:
+				push += away / d * (min_d - d) * 4.0
+		if s.cooldown > 0.0 or battle.time > s.engage_until:
+			s.aim_yaw = yaw_to(threat - s.position)
+		s.steer(dt, goal, minf(speed_limit, s.speed_cap()), push, map, feed)
+		_choose_stance(s, holding)
+
+
+func _push_from(s: Soldier, neighbours: Array[Soldier]) -> Vector3:
+	var push := Vector3.ZERO
+	for o in neighbours:
+		if o == s or not o.alive:
+			continue
+		var away := Vector3(s.position.x - o.position.x, 0.0, s.position.z - o.position.z)
+		var d := away.length()
+		if d < 1.0 and d > 0.001:
+			push += away / d * (1.0 - d) * 4.0
+	return push
+
+
+# --- Wounded and rescue ---
+
+func _bleed(dt: float) -> void:
+	for s in members:
+		if s.wounded and not s.stabilized:
+			s.bleed -= dt
+			if s.bleed <= 0.0:
+				_release(s)
+				s.expire()
+				battle.on_died_of_wounds(self)
+
+
+## Sends one free man after the nearest untreated casualty, own squad first.
+func _assign_rescue() -> void:
+	if state >= State.PINNED or not is_effective():
+		return
+	for s in members:
+		if s.task != "":
+			return
+	var best: Soldier = null
+	var best_score := INF
+	for u in battle.units:
+		if u.side != side or not (u is InfantryUnit) or u.position.distance_to(position) > RESCUE_RANGE + 20.0:
+			continue
+		for w in (u as InfantryUnit).members:
+			if not w.wounded or w.stabilized or w.rescuer != null:
+				continue
+			var score := _flat(w.position, position) + (0.0 if u == self else 15.0)
+			if score < best_score:
+				best_score = score
+				best = w
+	if best == null:
+		return
+	var helper: Soldier = null
+	var helper_d := RESCUE_RANGE
+	for s in members:
+		if s.alive and not s.busy():
+			var d := _flat(s.position, best.position)
+			if d < helper_d:
+				helper_d = d
+				helper = s
+	if helper == null:
+		return
+	helper.task = "go"
+	helper.patient = best
+	best.rescuer = helper
+	battle.notify(self, "%s: man down, going to him" % display_name, false)
+
+
+func _cancel_task(s: Soldier) -> void:
+	if s.patient != null:
+		s.patient.rescuer = null
+		s.patient.carried_by = null
+	s.patient = null
+	s.task = ""
+	s.drag_to = Vector3.INF
+	s.face_point = Vector3.INF
+	s.hand_targets.clear()
+	s.slung = false
+
+
+func _release(w: Soldier) -> void:
+	if w.rescuer != null:
+		var r := w.rescuer
+		r.patient = null
+		_cancel_task(r)
+	w.rescuer = null
+	w.carried_by = null
+
+
+## Run to the casualty, drag him out of the line of fire, kneel and patch him up.
+func _do_task(s: Soldier, dt: float, neighbours: Array[Soldier]) -> void:
+	var w := s.patient
+	if w == null or not w.wounded or state >= State.PANICKED:
+		_cancel_task(s)
+		return
+	var away := Vector3(position.x - threat.x, 0.0, position.z - threat.z).normalized()
+	var push := _push_from(s, neighbours)
+	match s.task:
+		"go":
+			s.slung = false
+			s.face_point = Vector3.INF
+			var reach := w.position + away * 1.2
+			s.steer(dt, reach, minf(Soldier.RUN_SPEED, s.speed_cap()), push, map)
+			s.want_crouch = 0.45
+			s.want_prone = 0.0
+			if _flat(s.position, reach) < 1.0:
+				if map.cover_from(w.position, threat) >= 0.5:
+					s.task = "aid"
+				else:
+					s.task = "drag"
+					s.drag_to = map.best_cover_near(w.position + away * 7.0, 3, {}, threat)
+					w.carried_by = s
+				s.task_timer = 0.0
+		"drag":
+			s.slung = true
+			s.want_crouch = 0.6
+			s.want_prone = 0.0
+			s.steer(dt, s.drag_to, DRAG_SPEED, push, map)
+			# The body follows on an arm's length, head first, sliding over the ground.
+			var to_r := Vector3(s.position.x - w.position.x, 0.0, s.position.z - w.position.z)
+			if to_r.length() > 0.01:
+				var dir := to_r.normalized()
+				var want := s.position - dir * Soldier.DRAG_DISTANCE
+				w.position = Vector3(want.x, map.height_at(want), want.z)
+				w.facing = atan2(dir.x, dir.z)
+				w.rotation.y = w.facing
+				var chest := w.position + dir * 1.15 + Vector3.UP * 0.3
+				var side := Vector3(dir.z, 0.0, -dir.x) * 0.16
+				s.face_point = chest
+				s.hand_targets = [chest + side, chest - side]
+			if _flat(s.position, s.drag_to) < 0.7:
+				w.carried_by = null
+				s.task = "aid"
+				s.task_timer = 0.0
+		"aid":
+			s.slung = true
+			s.want_crouch = 1.0
+			s.want_prone = 0.0
+			var dir := Vector3(sin(w.facing), 0.0, cos(w.facing))
+			var chest := w.position + dir * 1.15 + Vector3.UP * 0.25
+			var spot := chest + Vector3(dir.z, 0.0, -dir.x) * 0.75
+			s.steer(dt, spot, 1.5, push, map)
+			s.face_point = chest
+			s.hand_targets = [chest + Vector3(0.0, 0.0, 0.1), chest - Vector3(0.0, 0.0, 0.1)]
+			if _flat(s.position, spot) < 0.5:
+				s.task_timer += dt
+				if s.task_timer >= FIRST_AID_TIME:
+					w.stabilized = true
+					w.rescuer = null
+					s.patient = null
+					_cancel_task(s)
+					battle.notify(self, "%s: wounded man stabilized" % display_name, false)
+
+
+func _nearby_soldiers() -> Array[Soldier]:
+	var out: Array[Soldier] = []
+	for u in battle.units:
+		if u is InfantryUnit and u.position.distance_to(position) < 25.0:
+			out.append_array((u as InfantryUnit).members)
+	return out
+
+
+## Picks the stance that fits his ground, his orders and the squad's nerve.
+func _choose_stance(s: Soldier, stationary: bool) -> void:
+	var t := map.type_at(s.position)
+	var shield := map.shield_at(s.position, threat)
+	var c := 0.0
+	var p := 0.0
+	s.ducked = false
+	s.cowering = false
+	var wants_fire := battle.time < s.engage_until and state < State.PINNED
+	if state == State.PANICKED or state == State.ROUTED:
+		if stationary:
+			s.cowering = true
+			if t == BattleMap.T.TRENCH or t == BattleMap.T.BUILDING or shield >= 0.45:
+				c = 1.0
+			else:
+				p = 1.0
+	elif not stationary:
+		if _bounding and s.rush_pos != Vector3.INF and s.team == _moving_team:
+			c = 0.35
+		elif order == Order.FAST:
+			pass
+		elif state == State.SUPPRESSED:
+			p = 1.0
+		elif order == Order.SNEAK:
+			c = 0.9
+		elif _contact:
+			# Enemy about: tactical crouched walk, staying low.
+			c = 0.5
+	elif t == BattleMap.T.TRENCH:
+		s.ducked = true
+		c = 0.45 if wants_fire else 1.0
+	elif t == BattleMap.T.BUILDING or t == BattleMap.T.RUBBLE:
+		s.ducked = true
+		c = 0.35 if wants_fire else 0.9
+	elif shield >= 0.45:
+		# Behind a wall or wreck: crouch out of sight, rise over it to shoot.
+		s.ducked = true
+		c = 0.3 if wants_fire else 1.0
+	elif state >= State.SUPPRESSED or is_guarding() or t in [BattleMap.T.OPEN, BattleMap.T.FIELD, BattleMap.T.ROAD, BattleMap.T.CRATER]:
+		p = 1.0
+	else:
+		c = 1.0
+	s.want_crouch = c
+	s.want_prone = p
+
+
+func _sim_fire(dt: float) -> void:
+	if state >= State.PANICKED:
+		return
+	if not arrived and order == Order.FAST:
+		return
+	var acc := _accuracy()
+	for s in members:
+		if not s.alive:
+			continue
+		if s.action == "throw" and not s.thrown and s.action_t >= s.action_len * 0.55:
+			s.thrown = true
+			battle.throw_grenade(s.hand_point(), s.throw_at, side)
+		s.cooldown -= dt
+		if s.cooldown > 0.0:
+			continue
+		var w: Dictionary = Defs.WEAPONS[s.weapon]
+		var reload: float = w["reload"]
+		var aim := Vector3.INF
+		var t: Unit = null
+		if area_fire:
+			if not w.get("at_only", false) and s.position.distance_to(fire_point) <= float(w["range"]):
+				aim = fire_point
+		else:
+			t = pick_target(w, s.position)
+			if t != null:
+				aim = t.position
+		if aim == Vector3.INF:
+			s.cooldown = 0.4
+			continue
+		s.engage_until = battle.time + 2.5
+		s.aim_yaw = yaw_to(aim - s.position)
+		if _try_grenade(s, t):
+			continue
+		if not s.can_fire():
+			s.cooldown = 0.25
+			continue
+		var fired := false
+		# Men of the covering team fire from a halt at full accuracy.
+		var a := acc * (2.0 if not arrived and s.vel.length() < 0.3 else 1.0)
+		if t != null:
+			fired = Combat.fire(battle, self, s.muzzle(), s.weapon, t, a)
+		else:
+			fired = Combat.fire_area(battle, self, s.muzzle(), s.weapon, fire_point, a)
+		if fired:
+			s.cooldown = reload * randf_range(0.8, 1.3)
+			s.fired(battle.time)
+			last_fired = battle.time
+		else:
+			s.cooldown = 0.6
+
+
+## Riflemen lob a grenade at close enemy infantry, especially men behind cover.
+func _try_grenade(s: Soldier, t: Unit) -> bool:
+	if t == null or t.is_vehicle or s.grenades <= 0 or s.busy() or not arrived or battle.time < _next_grenade:
+		return false
+	var at := t.aim_point()
+	var d := _flat(s.position, at)
+	if d < GRENADE_MIN or d > GRENADE_MAX or randf() > 0.35:
+		return false
+	at.y = map.height_at(at)
+	s.start_throw(at + Vector3(randf_range(-2.0, 2.0), 0.0, randf_range(-2.0, 2.0)))
+	s.aim_yaw = yaw_to(at - s.position)
+	s.cooldown = 1.5
+	_next_grenade = battle.time + GRENADE_COOLDOWN
+	return true
+
+
+func aim_point() -> Vector3:
+	var alive: Array[Soldier] = []
+	for s in members:
+		if s.alive:
+			alive.append(s)
+	if alive.is_empty():
+		return position + Vector3.UP
+	return alive.pick_random().center()
+
+
+func exposure_at(p: Vector3) -> float:
+	var s := _nearest(p, 3.0)
+	return s.exposure() if s != null else 1.0
+
+
+func distance_to_point(p: Vector3) -> float:
+	var best := INF
+	for s in members:
+		if s.alive:
+			best = minf(best, Vector2(s.position.x - p.x, s.position.z - p.z).length())
+	return best
+
+
+func _nearest(p: Vector3, max_d: float) -> Soldier:
+	var best: Soldier = null
+	var best_d := max_d
+	for s in members:
+		if s.alive:
+			var d := Vector2(s.position.x - p.x, s.position.z - p.z).length()
+			if d < best_d:
+				best_d = d
+				best = s
+	return best
+
+
+func take_hit(pos: Vector3, shooter: Unit) -> void:
+	var s := _nearest(pos, 3.0)
+	if s != null:
+		casualty(s, shooter, Vector3.ZERO, 0.0, randf() < WOUND_CHANCE_BULLET)
+
+
+func apply_blast(pos: Vector3, radius: float, lethal: float, supp: float, _pen: float, _top: bool) -> void:
+	var nearest := INF
+	for s in members:
+		if not s.alive:
+			continue
+		var away := Vector3(s.position.x - pos.x, 0.0, s.position.z - pos.z)
+		var d := away.length()
+		nearest = minf(nearest, d)
+		if d < radius:
+			var chance := lethal * (1.0 - d / radius) * (1.0 - map.cover_from(s.position, pos) * 0.65) * (0.6 + 0.4 * s.exposure())
+			if randf() < chance:
+				var force := (1.0 - d / radius) * radius
+				casualty(s, null, away.normalized() * force * 1.6, force * 0.9, randf() < WOUND_CHANCE_BLAST)
+	for s in members:
+		if s.wounded and _flat(s.position, pos) < radius * 0.6 and randf() < lethal * 0.5:
+			_release(s)
+			s.expire()
+			battle.on_died_of_wounds(self)
+	if nearest < radius * 3.0:
+		receive_suppression(supp * (1.0 - nearest / (radius * 3.0)) + 5.0)
+
+
+func casualty(s: Soldier, shooter: Unit, knock: Vector3, up_speed: float, wounded := false) -> void:
+	if not s.alive:
+		return
+	if s.patient != null:
+		s.patient.rescuer = null
+		s.patient.carried_by = null
+	s.die(knock, up_speed, wounded)
+	if shooter != null:
+		shooter.kills += 1
+	morale_hit(10.0)
+	suppression = minf(100.0, suppression + 12.0)
+	battle.on_casualty(self)
+	if alive_count() == 0:
+		state = State.DESTROYED
+		battle.on_unit_lost(self)
+
+
+func throw_smoke(p: Vector3) -> bool:
+	if smoke_left <= 0 or not is_effective() or distance_to_point(p) > SMOKE_RANGE:
+		return false
+	smoke_left -= 1
+	var at := Vector3(p.x, map.height_at(p), p.z)
+	battle.schedule(1.2, func() -> void: battle.add_smoke_cloud(at, 35.0))
+	return true
+
+
+func update_visuals(dt: float) -> void:
+	super.update_visuals(dt)
+	var sdt := Game.sim_delta(dt) if battle.phase == Battle.Phase.BATTLE else 0.0
+	for s in members:
+		s.animate(sdt, battle.time, map)
+
+
+func _set_body_visible(v: bool) -> void:
+	for s in members:
+		s.visible = v
