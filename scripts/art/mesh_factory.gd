@@ -873,12 +873,12 @@ static func bush() -> ArrayMesh:
 const CRATER_VARIANTS := 8
 
 ## Per-variant footprint character. Radius is the rim radius in metres; lip and floor
-## factors vary the silhouette from wide shallow saucers with a low thrown lip to
-## tight deep bowls under a heavy spoil rim, so a crater field never tiles visibly.
+## factors vary the bowls between wider-shallower and tighter-deeper, with only a
+## light waver on the near-circular outline, so a crater field never tiles visibly.
 const CRATER_R: Array[float] = [1.1, 1.35, 1.5, 1.6, 1.8, 2.0, 2.2, 2.4]
 const _CRATER_LIP: Array[float] = [0.7, 1.25, 0.55, 1.0, 1.35, 0.8, 1.15, 0.95]
 const _CRATER_FLOOR: Array[float] = [0.46, 0.32, 0.55, 0.40, 0.30, 0.48, 0.36, 0.42]
-const _CRATER_SPOKES: Array[int] = [9, 10, 11, 10, 12, 10, 11, 12]
+const _CRATER_SPOKES: Array[int] = [14, 15, 16, 15, 16, 14, 15, 16]
 
 ## Dark wet-earth family shared with the map's trench spoil and crater scorch, so the
 ## mesh ties into the vertex-tinted ground beneath it.
@@ -887,11 +887,11 @@ const CRATER_WALL := Color(0.13, 0.10, 0.075)
 const CRATER_CHARRED := Color(0.085, 0.07, 0.06)
 
 
-## Shell crater: an irregular, slightly elliptical raised lip of thrown-up earth around
-## a dished interior that grades from disturbed mud at the rim through a dark wall to a
-## charred centre. The mesh sits ON the ground, in the shallow scorched dimple the blast
-## leaves in the heightfield — the lip and the dark grading carry the depth. `variant`
-## picks one of CRATER_VARIANTS footprints; -1 picks one at random.
+## Shell crater: an irregular, slightly elliptical dished interior that grades from a
+## dark wall at the rim to a charred centre. The mesh sits flush ON the ground, in the
+## shallow scorched dimple the blast leaves in the heightfield — the dimple and the dark
+## grading carry the depth; no raised lip or spoil skirt. `variant` picks one of
+## CRATER_VARIANTS footprints; -1 picks one at random.
 static func crater(variant := -1) -> ArrayMesh:
 	if variant < 0:
 		variant = randi() % CRATER_VARIANTS
@@ -901,53 +901,36 @@ static func crater(variant := -1) -> ArrayMesh:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 4700 + variant
 	var r := CRATER_R[variant]
-	var lip := (0.16 + r * 0.07) * _CRATER_LIP[variant]
+	var lip := 0.03
 	var n := _CRATER_SPOKES[variant]
-	var ex := rng.randf_range(0.76, 1.28)
+	var ex := rng.randf_range(0.94, 1.06)
 	var rim := PackedVector2Array()
-	var outer := PackedVector2Array()
 	var floor_pts := PackedVector2Array()
 	var jig := PackedFloat32Array()
 	for k in n:
-		jig.append(rng.randf_range(0.76, 1.24))
+		jig.append(rng.randf_range(0.94, 1.06))
 	for k in n:
 		var a := (k + 0.5) * TAU / n
 		var dir := Vector2(sin(a) * ex, cos(a))
 		rim.append(dir * r * jig[k])
-		outer.append(dir * (r * jig[k] + rng.randf_range(0.5, 0.9)))
 		# Offset jitter index: the floor ring is irregular in its own way, not a copy.
 		floor_pts.append(dir * r * jig[(k + 3) % n] * _CRATER_FLOOR[variant])
 	# Slight per-variant cast on the shared mud family: some holes drier, some wetter.
 	var cast := rng.randf_range(-0.05, 0.05)
-	var earth := CRATER_EARTH.lightened(maxf(cast, 0.0)).darkened(maxf(-cast, 0.0))
 	var wall := CRATER_WALL.darkened(maxf(-cast, 0.0) * 0.5)
 	var charred := CRATER_CHARRED
 	var b := Builder.new()
 	var centre := Vector3(0.0, 0.02, 0.0)
 	for k in n:
 		var j := (k + 1) % n
-		var ok := Vector3(outer[k].x, 0.0, outer[k].y)
-		var oj := Vector3(outer[j].x, 0.0, outer[j].y)
 		var rk := Vector3(rim[k].x, lip, rim[k].y)
 		var rj := Vector3(rim[j].x, lip, rim[j].y)
 		var fk := Vector3(floor_pts[k].x, 0.04, floor_pts[k].y)
 		var fj := Vector3(floor_pts[j].x, 0.04, floor_pts[j].y)
-		# Outer spoil skirt, in subtly varying earth shades.
-		var skirt := earth.darkened(0.06 * (k % 3))
-		var out_dir := (ok + oj) * 0.5 + Vector3.UP
-		b.tri(ok, oj, rj, out_dir, skirt)
-		b.tri(ok, rj, rk, out_dir, skirt)
-		# Inner wall down from the lip, then the charred floor fan.
+		# Dark wall in from the flush rim, then the charred floor fan.
 		b.tri(rk, rj, fj, Vector3.UP, wall.darkened(0.05 * (k % 2)))
 		b.tri(rk, fj, fk, Vector3.UP, wall)
 		b.tri(fk, fj, centre, Vector3.UP, charred)
-	# Clods of earth thrown onto the rim.
-	for k in rng.randi_range(4, 8):
-		var a := rng.randf() * TAU
-		var d := Vector2(sin(a) * ex, cos(a)) * r * rng.randf_range(0.95, 1.35)
-		b.box(Vector3(rng.randf_range(0.22, 0.5), rng.randf_range(0.12, 0.2), rng.randf_range(0.18, 0.35)),
-				Vector3(d.x, lip * rng.randf_range(0.3, 0.8), d.y),
-				earth.darkened(rng.randf_range(0.0, 0.12)), Vector3(0.0, rng.randf() * TAU, 0.0))
 	var mesh := b.build()
 	_cache[key] = mesh
 	return mesh
@@ -970,7 +953,8 @@ static func tone_material(tone: float) -> StandardMaterial3D:
 	return m
 
 
-## Quadcopter, drawn double size so it is visible from the camera.
+## Quadcopter body, drawn double size so it is visible from the camera. The props are
+## separate meshes — drone_rotor() hung at drone_rotor_pos() — so Drone can spin them.
 ## Recon is a Mavic-ish camera drone; FPV is a racing X-frame with an RPG warhead slung under.
 static func drone(fpv: bool) -> ArrayMesh:
 	var key := "drone_%s" % fpv
@@ -979,28 +963,31 @@ static func drone(fpv: bool) -> ArrayMesh:
 	var b := Builder.new()
 	b.base = Transform3D(Basis.from_scale(Vector3.ONE * 2.0), Vector3.ZERO)
 	if not fpv:
+		# Slim grey fuselage with a raised top shell, camera gimbal under the nose,
+		# four thin arms carrying small motor pods at the tips.
 		var body := Color(0.55, 0.56, 0.58)
-		b.box(Vector3(0.3, 0.12, 0.4), Vector3.ZERO, body)
-		for a: float in [PI / 4, 3 * PI / 4, 5 * PI / 4, 7 * PI / 4]:
-			b.box(Vector3(0.5, 0.04, 0.05), Vector3(cos(a) * 0.25, 0.0, sin(a) * 0.25), body, Vector3(0.0, -a, 0.0))
-			b.cyl(0.14, 0.14, 0.02, Vector3(cos(a) * 0.45, 0.06, sin(a) * 0.45), Color(0.3, 0.3, 0.3), Vector3.ZERO, 8)
+		var dark := Color(0.28, 0.28, 0.3)
+		b.box(Vector3(0.17, 0.08, 0.34), Vector3(0.0, 0.0, 0.02), body)
+		b.box(Vector3(0.12, 0.05, 0.28), Vector3(0.0, 0.055, 0.03), body.lightened(0.07))
+		b.ball(0.045, Vector3(0.0, -0.03, -0.16), dark, Vector3.ONE, 6, 4)
+		b.box(Vector3(0.028, 0.028, 0.016), Vector3(0.0, -0.03, -0.2), Color(0.1, 0.12, 0.2))
+		for k in 4:
+			var a := PI / 4 + k * PI / 2
+			var tip := Vector3(cos(a) * 0.38, 0.02, sin(a) * 0.38)
+			b.box(Vector3(0.34, 0.028, 0.04), Vector3(cos(a) * 0.21, 0.02, sin(a) * 0.21), body.darkened(0.12), Vector3(0.0, -a, 0.0))
+			b.cyl(0.035, 0.042, 0.05, tip + Vector3(0.0, 0.028, 0.0), dark, Vector3.ZERO, 6)
 		var mesh := b.build()
 		_cache[key] = mesh
 		return mesh
-	# Flat carbon X-frame: thin centre plate, four slim diagonal arms, motors at the tips
-	# and big two-blade props, each box at its own yaw so the discs read as spinning.
+	# Flat carbon X-frame: thin centre plate, four slim diagonal arms, motors at the tips.
 	var carbon := Color(0.09, 0.09, 0.1)
-	var prop := Color(0.82, 0.5, 0.14)
 	b.box(Vector3(0.2, 0.025, 0.3), Vector3.ZERO, carbon)
 	b.box(Vector3(0.14, 0.025, 0.2), Vector3(0.0, 0.035, 0.0), carbon.lightened(0.08))
-	var spins: Array[float] = [0.3, 1.4, 0.9, 2.0]
 	for k in 4:
 		var a := PI / 4 + k * PI / 2
 		var tip := Vector3(cos(a) * 0.46, 0.0, sin(a) * 0.46)
 		b.box(Vector3(0.5, 0.02, 0.045), Vector3(cos(a) * 0.24, 0.0, sin(a) * 0.24), carbon, Vector3(0.0, -a, 0.0))
 		b.cyl(0.04, 0.045, 0.07, tip + Vector3(0.0, 0.04, 0.0), Color(0.2, 0.2, 0.22), Vector3.ZERO, 6)
-		b.box(Vector3(0.42, 0.01, 0.045), tip + Vector3(0.0, 0.085, 0.0), prop, Vector3(0.0, -a + spins[k], 0.0))
-		b.cyl(0.015, 0.015, 0.02, tip + Vector3(0.0, 0.09, 0.0), carbon, Vector3.ZERO, 5)
 	# Lipo battery strapped on top, with a yellow strap band.
 	b.box(Vector3(0.13, 0.08, 0.24), Vector3(0.0, 0.095, 0.02), Color(0.2, 0.24, 0.3))
 	b.box(Vector3(0.14, 0.085, 0.035), Vector3(0.0, 0.095, 0.02), Color(0.9, 0.78, 0.15))
@@ -1025,6 +1012,166 @@ static func drone(fpv: bool) -> ArrayMesh:
 	var mesh := b.build()
 	_cache[key] = mesh
 	return mesh
+
+
+## Where drone(fpv)'s four rotors mount, in drone space (double-size like the body).
+static func drone_rotor_pos(fpv: bool, k: int) -> Vector3:
+	var a := PI / 4 + k * PI / 2
+	if fpv:
+		return Vector3(cos(a) * 0.92, 0.17, sin(a) * 0.92)
+	return Vector3(cos(a) * 0.76, 0.15, sin(a) * 0.76)
+
+
+## One two-blade prop centred on its hub: Drone hangs four at drone_rotor_pos() and
+## spins them on the sim clock. FPV blades are black; recon's a dark DJI grey.
+static func drone_rotor(fpv: bool) -> ArrayMesh:
+	var key := "drone_rotor_%s" % fpv
+	if _cache.has(key):
+		return _cache[key]
+	var b := Builder.new()
+	b.base = Transform3D(Basis.from_scale(Vector3.ONE * 2.0), Vector3.ZERO)
+	var blade := Color(0.05, 0.05, 0.06) if fpv else Color(0.13, 0.13, 0.15)
+	if fpv:
+		b.box(Vector3(0.42, 0.012, 0.05), Vector3.ZERO, blade)
+	else:
+		b.box(Vector3(0.3, 0.01, 0.035), Vector3.ZERO, blade)
+	b.cyl(0.016, 0.016, 0.026, Vector3(0.0, 0.008, 0.0), blade.lightened(0.12), Vector3.ZERO, 5)
+	var mesh := b.build()
+	_cache[key] = mesh
+	return mesh
+
+
+## Four faint translucent discs, one just above each rotor: the motion-blur circle
+## that sells prop speed while the blade crosses turn at a readable rate.
+static func drone_discs(fpv: bool) -> ArrayMesh:
+	var key := "drone_discs_%s" % fpv
+	if _cache.has(key):
+		return _cache[key]
+	var b := Builder.new()
+	b.base = Transform3D(Basis.from_scale(Vector3.ONE * 2.0), Vector3.ZERO)
+	var c := Color(0.06, 0.06, 0.07, 0.22) if fpv else Color(0.14, 0.14, 0.16, 0.18)
+	var r := 0.215 if fpv else 0.155
+	var rad := 0.46 if fpv else 0.38
+	var y := (0.085 if fpv else 0.075) + 0.014
+	for k in 4:
+		var a := PI / 4 + k * PI / 2
+		b.cyl(r, r, 0.004, Vector3(cos(a) * rad, y, sin(a) * rad), c, Vector3.ZERO, 10)
+	var mesh := b.build()
+	mesh.surface_set_material(0, trans_material())
+	_cache[key] = mesh
+	return mesh
+
+
+## Heavy bomber hexacopter ("agricultural" style): a big olive tub on a carbon frame,
+## six long arms with motor pods, twin landing skids and a bomb rack slung under the
+## belly. Visibly larger than the recon quad so it reads at full zoom-out. The bombs
+## themselves are separate meshes (bomber_bomb at bomber_bomb_pos) so Drone can
+## release them one by one.
+static func bomber() -> ArrayMesh:
+	if _cache.has("bomber"):
+		return _cache["bomber"]
+	var b := Builder.new()
+	b.base = Transform3D(Basis.from_scale(Vector3.ONE * 2.0), Vector3.ZERO)
+	var olive := Color(0.24, 0.27, 0.17)
+	var carbon := Color(0.1, 0.1, 0.11)
+	# Central tub (crop-sprayer tank silhouette) with a darker deck and avionics box.
+	b.box(Vector3(0.34, 0.2, 0.46), Vector3(0.0, 0.02, 0.0), olive)
+	b.box(Vector3(0.26, 0.07, 0.36), Vector3(0.0, 0.15, 0.0), olive.darkened(0.15))
+	b.box(Vector3(0.18, 0.05, 0.2), Vector3(0.0, 0.2, -0.04), carbon.lightened(0.06))
+	# Six heavy arms carrying fat motor pods.
+	for k in 6:
+		var a := PI / 6 + k * PI / 3
+		var tip := Vector3(cos(a) * 0.62, 0.1, sin(a) * 0.62)
+		b.box(Vector3(0.62, 0.035, 0.06), Vector3(cos(a) * 0.33, 0.1, sin(a) * 0.33), carbon, Vector3(0.0, -a, 0.0))
+		b.cyl(0.05, 0.06, 0.09, tip + Vector3(0.0, 0.045, 0.0), Color(0.18, 0.18, 0.2), Vector3.ZERO, 6)
+	# Twin landing skids on short struts.
+	for sx: float in [-0.2, 0.2]:
+		b.box(Vector3(0.035, 0.035, 0.6), Vector3(sx, -0.22, 0.0), carbon.lightened(0.04))
+		for sz: float in [-0.18, 0.18]:
+			b.box(Vector3(0.03, 0.14, 0.035), Vector3(sx, -0.14, sz), carbon)
+	# Bomb rack: slim crossframe under the tub.
+	b.box(Vector3(0.3, 0.025, 0.08), Vector3(0.0, -0.13, 0.0), carbon)
+	b.box(Vector3(0.05, 0.025, 0.3), Vector3(0.0, -0.13, 0.0), carbon)
+	# GPS puck and a pair of whip antennas.
+	b.cyl(0.035, 0.04, 0.025, Vector3(0.08, 0.24, 0.08), Color(0.8, 0.8, 0.78), Vector3.ZERO, 6)
+	for ax: float in [-0.08, 0.08]:
+		b.cyl(0.007, 0.007, 0.2, Vector3(ax, 0.32, 0.18), Color(0.85, 0.85, 0.88), Vector3(0.5, 0.0, ax * 3.0), 4)
+	var mesh := b.build()
+	_cache["bomber"] = mesh
+	return mesh
+
+
+## Where bomber()'s six rotors mount, in drone space (double-size like the body).
+static func bomber_rotor_pos(k: int) -> Vector3:
+	var a := PI / 6 + k * PI / 3
+	return Vector3(cos(a) * 1.24, 0.34, sin(a) * 1.24)
+
+
+## One big two-blade prop for the bomber's six motors, spun by Drone like drone_rotor().
+static func bomber_rotor() -> ArrayMesh:
+	if _cache.has("bomber_rotor"):
+		return _cache["bomber_rotor"]
+	var b := Builder.new()
+	b.base = Transform3D(Basis.from_scale(Vector3.ONE * 2.0), Vector3.ZERO)
+	var blade := Color(0.07, 0.08, 0.07)
+	b.box(Vector3(0.56, 0.016, 0.06), Vector3.ZERO, blade)
+	b.cyl(0.02, 0.02, 0.03, Vector3(0.0, 0.01, 0.0), blade.lightened(0.12), Vector3.ZERO, 5)
+	var mesh := b.build()
+	_cache["bomber_rotor"] = mesh
+	return mesh
+
+
+## Six prop-blur discs matching bomber_rotor_pos, like drone_discs for the small drones.
+static func bomber_discs() -> ArrayMesh:
+	if _cache.has("bomber_discs"):
+		return _cache["bomber_discs"]
+	var b := Builder.new()
+	b.base = Transform3D(Basis.from_scale(Vector3.ONE * 2.0), Vector3.ZERO)
+	var c := Color(0.08, 0.09, 0.07, 0.2)
+	for k in 6:
+		var a := PI / 6 + k * PI / 3
+		b.cyl(0.27, 0.27, 0.004, Vector3(cos(a) * 0.62, 0.185, sin(a) * 0.62), c, Vector3.ZERO, 10)
+	var mesh := b.build()
+	mesh.surface_set_material(0, trans_material())
+	_cache["bomber_discs"] = mesh
+	return mesh
+
+
+## One slot on the bomber's belly rack (four slots, 2×2), in drone space.
+static func bomber_bomb_pos(k: int) -> Vector3:
+	return Vector3(0.16 * (1.0 if k % 2 == 0 else -1.0), -0.4, 0.16 * (1.0 if k < 2 else -1.0))
+
+
+## A small nose-down drop bomb: olive tube, cone nose, three tail fins.
+static func bomber_bomb() -> ArrayMesh:
+	if _cache.has("bomber_bomb"):
+		return _cache["bomber_bomb"]
+	var b := Builder.new()
+	b.base = Transform3D(Basis.from_scale(Vector3.ONE * 2.0), Vector3.ZERO)
+	var olive := Color(0.3, 0.33, 0.21)
+	b.cyl(0.05, 0.05, 0.16, Vector3.ZERO, olive)
+	b.cyl(0.05, 0.012, 0.07, Vector3(0.0, -0.115, 0.0), olive.darkened(0.1))
+	for k in 3:
+		var a := k * TAU / 3.0
+		b.box(Vector3(0.012, 0.09, 0.055), Vector3(cos(a) * 0.035, 0.12, sin(a) * 0.035), olive.darkened(0.15), Vector3(0.0, -a, 0.0))
+	var mesh := b.build()
+	_cache["bomber_bomb"] = mesh
+	return mesh
+
+
+static var _trans: StandardMaterial3D
+
+
+## The shared vertex-colour material with alpha blending, for prop-blur discs.
+static func trans_material() -> StandardMaterial3D:
+	if _trans == null:
+		_trans = StandardMaterial3D.new()
+		_trans.vertex_color_use_as_albedo = true
+		_trans.vertex_color_is_srgb = true
+		_trans.roughness = 1.0
+		_trans.transparency = BaseMaterial3D.TRANSPARENCY_ALPHA
+		_trans.cull_mode = BaseMaterial3D.CULL_DISABLED
+	return _trans
 
 
 static func flag_pole() -> ArrayMesh:

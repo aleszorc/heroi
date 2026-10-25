@@ -20,6 +20,7 @@ const ICONS := {
 	"mortar": '<path d="M7 20 L15 5.5" stroke-width="3.8"/><path d="M12 11.5 L17.5 20"/><path d="M3.5 21 H13.5"/>',
 	"recon": '<path d="M7 7 L17 17 M17 7 L7 17"/><circle cx="5.5" cy="5.5" r="3"/><circle cx="18.5" cy="5.5" r="3"/><circle cx="5.5" cy="18.5" r="3"/><circle cx="18.5" cy="18.5" r="3"/><rect x="10" y="10" width="4" height="4" fill="#fff" stroke="none"/>',
 	"fpv": '<path d="M4.5 8.5 H19.5"/><path d="M6.5 8.5 V5.5 M17.5 8.5 V5.5"/><path d="M3.5 5.5 H9.5 M14.5 5.5 H20.5"/><rect x="10.2" y="6.7" width="3.6" height="3.6" fill="#fff" stroke="none"/><path d="M12 11.5 L9.6 13.4 12 19.8 14.4 13.4 Z" fill="#fff" stroke="none"/>',
+	"bomber": '<path d="M3 8 H21"/><path d="M5.5 8 V5.5 M12 8 V5 M18.5 8 V5.5"/><path d="M2.5 5.5 H8.5 M9 5 H15 M15.5 5.5 H21.5"/><rect x="9.4" y="8.8" width="5.2" height="3.6" fill="#fff" stroke="none"/><circle cx="12" cy="15.3" r="1.6" fill="#fff" stroke="none"/><circle cx="12" cy="20" r="1.6" fill="#fff" stroke="none"/>',
 	"pause": '<rect x="7.5" y="6" width="3.2" height="12" fill="#fff" stroke="none"/><rect x="13.3" y="6" width="3.2" height="12" fill="#fff" stroke="none"/>',
 	"play": '<path d="M8.5 5.5 L18.5 12 L8.5 18.5 Z" fill="#fff" stroke="none"/>',
 	"rot_l": '<path d="M6.5 7 A7.5 7.5 0 1 0 12 4.5"/><path d="M12 1.5 L9 4.7 L12.4 7.5"/>',

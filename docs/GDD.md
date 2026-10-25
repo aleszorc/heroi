@@ -73,6 +73,7 @@ Infantry units are squads and teams of individual soldiers, each with one weapon
 | Drone Team | 2 | AK ×2 | Enables Recon and FPV abilities while alive |
 | M2A2 Bradley | 3 | 25 mm, TOW-2, coax | Mobile firepower; FPVs hunt it |
 | Off-map 82 mm mortar | — | 2 missions × 6 rounds | Breaks up assaults |
+| Heavy bomber drone | — | 2 sorties × 3–4 bombs | Wrecks vehicles, houses and dug-in infantry; needs the Drone Team |
 
 **Russia (AI)**
 | Unit | Notes |
@@ -228,6 +229,8 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 - **Recon (player):** tap an area. Orbits for 25 s, 45 s cooldown.
 - **FPV drone model:** racing X-frame kamikaze quad — carbon plate, four arms with two-blade props, strapped lipo on top, tilted nose camera, whip antennas, RPG warhead slung underneath. The recon drone keeps a commercial quadcopter look.
 - **FPV (player):** 4 per battle, 12 s cooldown. Tap a spotted enemy. 80% hit (55% vs trench or building, 70% vs moving vehicle, 65% vs moving infantry). Top attack with 350 penetration, plus 4 m blast.
+- **Bomber drone model:** heavy agricultural-style hexacopter — olive tub on a carbon frame, six arms with big props, landing skids, up to four bombs on a belly rack that visibly empties.
+- **Bomber (player):** 2 sorties, 20 s cooldown, needs the Drone Team. Tap a spotted enemy: the hexacopter crosses in from the Ukrainian edge (13 m/s at 22 m altitude), slows over the target and drops 3–4 bombs a second apart, each aimed at where the target is at release with ~3 m scatter. The ~2 s fall means vehicles and pinned or stationary infantry take the string full on while units that move largely escape. Each bomb: top attack with 45 penetration (kills IFVs outright, roughly even odds on a tank roof), 5 m blast, heavy structural damage — a string levels a house. After the last bomb it turns for home and despawns at the edge. Ground fire brings it down more easily than an FPV (big, slow, long overhead).
 - **Enemy FPVs:** every 40–60 s against a recently spotted unit (priority: vehicles, then ATGM and MG teams, then targets in the open). A **FPV!** marker appears over the hunted unit, which scrambles for cover on its own; moving and cover reduce the hit chance. Infantry within 35 m can shoot it down.
 - No drone team means no drones. Protecting the operators matters.
 
@@ -253,7 +256,7 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 - **Top left:** clock and objectives (blue held, red lost, `!` contested).
 - **Top right:** rotate, speed (1×/2×), pause, quit (× — opens a "Quit battle?" confirm overlay that pauses the sim; QUIT reloads the same map's briefing, KEEP PLAYING restores the previous pause state).
 - **Bottom:** roster cards (name, men alive, state colour). Tap a card to select and centre the camera.
-- **Right edge:** support (Mortar, Recon, FPV) with charges and cooldowns; each arms a mode for the next tap, shown as a prompt with Cancel.
+- **Right edge:** support (Mortar, Recon, FPV, Bomber) with charges and cooldowns; each arms a mode for the next tap, shown as a prompt with Cancel.
 - The message feed carries outcomes only: battle start and end, objectives taken or lost, units destroyed or lost. No advice, warnings or contact reports — the world itself (FX, the FPV! marker, roster state colours) is the feedback.
 - **Desktop debug:** mouse acts as touch, wheel zooms, WASD pans, Q/E rotate, Space pauses, Esc backs out one layer (armed support mode → selection → quit confirm).
 
@@ -313,20 +316,22 @@ Godot 4.7, GDScript, Mobile renderer. Everything is built in code from `scenes/m
 | `scripts/units/*.gd` | `Unit` base (orders, autonomy, morale, spotting state), `InfantryUnit`, `Soldier` (rig, animation, steering), `VehicleUnit` |
 | `scripts/map/building.gd` | Destructible houses: pieces, damage, debris, roof collapse, grid upkeep |
 | `scripts/fx/puffs.gd` | Volumetric puff particle system (smoke, dust, flame) |
+| `scripts/audio/sfx.gd` | Sound effects: pooled positional one-shots, drone/engine loops, field ambience |
 | `scripts/dev/demo.gd` | Scripted visual showcase for screenshots (`-- demo shots=/dir`) |
 | `scripts/combat/combat.gd` | Shot and area-fire resolution, delayed impacts |
 | `scripts/battle/battle.gd` | Simulation step, scheduler, spotting, blasts, victory |
-| `scripts/battle/support.gd` | Player mortar and drones; enemy artillery, FPV and recon timers |
-| `scripts/battle/drone.gd` | Recon and FPV drones |
+| `scripts/battle/support.gd` | Player mortar and drones (recon, FPV, heavy bomber); enemy artillery, FPV and recon timers |
+| `scripts/battle/drone.gd` | Recon, FPV and heavy bomber drones |
 | `scripts/battle/enemy_ai.gd` | Wave spawning and unit behaviour |
 | `scripts/battle/victory_location.gd` | Capture flags |
 | `scripts/ui/*.gd` | Camera rig, input controller, HUD |
 
 - **Simulation** runs on its own clock, so pausing freezes impacts, artillery and drones while the camera and UI stay live. Large frames are split into 50 ms sub-steps.
+- **Audio** is the one exception to everything-procedural: real CC0 recordings in `assets/audio/` (provenance in `assets/audio/SOURCES.md`), processed to mono WAV one-shots and MP3 loops (~3 MB). `Fx.explosion` forwards to `Sfx` so every blast sounds without per-caller hooks; drone and vehicle loops are attached by polling, not by the sim scripts. The `AudioListener3D` sits at the camera rig's ground focus, not on the camera boom.
 - **Performance:** spotting is staggered across frames. A full 10-minute battle simulates headless in about 2 s.
 
 **Test hooks:**
-- `godot --headless --path . --fixed-fps 30 --quit-after 6000 -- autostart fast log` plays a whole battle with the player passive and prints the event log and result.
+- `godot --headless --path . --fixed-fps 30 --quit-after 6000 -- autostart fast log` plays a whole battle with the player passive and prints the event log and result. An occasional `Leaked instance: AudioStreamPlayback…` warning at exit is engine shutdown noise (audio still mixing at quit), not a real leak.
 - `-- shots=/dir` (non-headless) saves screenshots at fixed frames.
 
 ## 10. Open questions

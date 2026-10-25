@@ -8,6 +8,7 @@ const PROMPTS := {
 	"mortar": "Tap target for 82mm mortar (6 rounds)",
 	"recon": "Tap area for the recon drone",
 	"fpv": "Tap a spotted enemy for an FPV strike",
+	"bomber": "Tap a spotted enemy for a heavy bomber run",
 }
 
 var battle: Battle
@@ -79,7 +80,10 @@ func _button(text: String, cb: Callable, min_size := Vector2(100, 64), icon := "
 	b.text = text
 	b.custom_minimum_size = min_size
 	b.focus_mode = Control.FOCUS_NONE
-	b.pressed.connect(cb)
+	b.pressed.connect(func() -> void:
+		if battle != null and battle.sfx != null:
+			battle.sfx.ui_tick()
+		cb.call())
 	if icon != "":
 		b.icon = UiIcons.tex(icon)
 	return b
@@ -256,7 +260,7 @@ func _build_support() -> void:
 	_root.add_child(col)
 	_place(col, Vector2(1, 0.5), Vector2(-12, -20), Control.GROW_DIRECTION_BEGIN, Control.GROW_DIRECTION_BOTH)
 	_blockers.append(col)
-	for mode: String in ["mortar", "recon", "fpv"]:
+	for mode: String in ["mortar", "recon", "fpv", "bomber"]:
 		var btn := _button("", func() -> void: ctl.set_mode(mode), Vector2(128, 60), mode)
 		btn.alignment = HORIZONTAL_ALIGNMENT_LEFT
 		col.add_child(btn)
@@ -535,6 +539,8 @@ func _refresh() -> void:
 			not live or not s.can_recon(), (ready if recon_wait <= 0 else wait) if team_ok else out)
 	_support_state("fpv", "FPV  %d" % s.fpv_left if team_ok else "FPV  —",
 			not live or not s.can_fpv(), (ready if s.fpv_left > 0 else out) if team_ok else out)
+	_support_state("bomber", "BOMBER  %d" % s.bomber_left if team_ok else "BOMBER  —",
+			not live or not s.can_bomber(), (ready if s.bomber_left > 0 else out) if team_ok else out)
 	for u: Unit in _cards.keys():
 		var card: Dictionary = _cards[u]
 		var btn: Button = card["btn"]

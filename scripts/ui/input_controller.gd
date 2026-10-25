@@ -4,21 +4,18 @@ extends Node
 ##
 ## Two orders only: with a unit selected, tap ground to move, tap a spotted enemy to
 ## attack. Pace, facing, cover, smoke and holding fire are the unit's own decisions.
-## The HUD's support buttons arm a mode (mortar, recon, fpv) for the next tap.
+## The HUD's support buttons arm a mode (mortar, recon, fpv, bomber) for the next tap.
 
 const TAP_SLOP := 14.0
 const DOUBLE_TAP_TIME := 0.35
-const ARC_RADIUS := 12.0
 const MOVE_COLOR := Color(0.5, 1.0, 0.5)
 const FIRE_COLOR := Color(1.0, 0.35, 0.3)
-const GUARD_COLOR := Color(0.45, 0.85, 1.0)
-const AMBUSH_COLOR := Color(0.85, 0.5, 1.0)
 
 var battle: Battle
 var cam: CameraRig
 var hud: Hud
 var selected: Unit = null
-## Armed support mode for the next tap: "", mortar, recon, fpv.
+## Armed support mode for the next tap: "", mortar, recon, fpv, bomber.
 var mode := ""
 
 var _touches := {}
@@ -212,6 +209,10 @@ func _apply_support(p: Vector3) -> void:
 			var foe := battle.pick_unit(p, Game.RU, true)
 			if foe != null and battle.support.launch_fpv(foe):
 				battle.fx.order_marker(foe.position, FIRE_COLOR)
+		"bomber":
+			var foe := battle.pick_unit(p, Game.RU, true)
+			if foe != null and battle.support.launch_bomber(foe):
+				battle.fx.order_marker(foe.position, FIRE_COLOR)
 
 
 func set_mode(m: String) -> void:
@@ -237,9 +238,6 @@ func _process(_delta: float) -> void:
 		return
 	var up := Vector3.UP * 0.4
 	var c := selected.position + up
-	if selected.is_guarding() and selected.guard_dir != Vector3.ZERO:
-		_draw_arc(c, selected.guard_dir, ARC_RADIUS,
-				AMBUSH_COLOR if selected.hold_fire else GUARD_COLOR)
 	if not selected.arrived and selected.path_i < selected.path.size():
 		var pts := PackedVector3Array([c])
 		for i in range(selected.path_i, selected.path.size()):
@@ -271,22 +269,3 @@ func _ribbon(pts: PackedVector3Array, width: float, color: Color) -> void:
 	_imesh.surface_end()
 
 
-## Fire arc the selected unit guards: two edges and the outer curve, lightly filled.
-func _draw_arc(c: Vector3, dir: Vector3, r: float, color: Color) -> void:
-	if dir == Vector3.ZERO:
-		return
-	var yaw := atan2(dir.x, dir.z)
-	var pts := PackedVector3Array([c])
-	for k in 13:
-		var a := yaw - Unit.GUARD_ARC + k * Unit.GUARD_ARC * 2.0 / 12.0
-		pts.append(c + Vector3(sin(a), 0.0, cos(a)) * r * 1.6)
-	pts.append(c)
-	_ribbon(pts, 0.6, color)
-	# Translucent fill so the guarded sector reads at a glance.
-	_imesh.surface_begin(Mesh.PRIMITIVE_TRIANGLES)
-	_imesh.surface_set_color(Color(color, 0.18))
-	for k in 12:
-		_imesh.surface_add_vertex(c)
-		_imesh.surface_add_vertex(pts[k + 1])
-		_imesh.surface_add_vertex(pts[k + 2])
-	_imesh.surface_end()
