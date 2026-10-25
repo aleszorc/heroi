@@ -26,7 +26,9 @@ var ai: EnemyAI
 var support: Support
 var phase := Phase.SETUP
 var time := 0.0
-var time_limit := 720.0
+## Hard ceiling on battle length (sim seconds); no mission may exceed it.
+const TIME_CAP := 600.0
+var time_limit := TIME_CAP
 var deploy_rect := Rect2()
 var stats := {"men_lost": [0, 0], "men_total": [0, 0], "vehicles_lost": [0, 0], "died_of_wounds": [0, 0]}
 
@@ -76,7 +78,7 @@ func setup(m: Dictionary) -> void:
 	add_child(units_root)
 	support = Support.new(self)
 	ai = EnemyAI.new(self, m["waves"])
-	time_limit = m["time_limit"]
+	time_limit = minf(float(m["time_limit"]), TIME_CAP)
 	deploy_rect = m["deploy"]
 	for vd: Array in m["vls"]:
 		var vl := VictoryLocation.new()

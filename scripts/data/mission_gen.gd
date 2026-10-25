@@ -32,7 +32,8 @@ static func generate(kind: String, mission_seed: int) -> Dictionary:
 # --- The three kinds ---
 
 static func _defend(rng: RandomNumberGenerator) -> Dictionary:
-	var time_limit := 600.0 + 30.0 * rng.randi_range(0, 6)
+	# 8-10 min; every kind stays within the 10-minute battle cap (GDD 3.7b).
+	var time_limit := 480.0 + 60.0 * rng.randi_range(0, 2)
 	var vls := _make_vls(rng, Game.UA, 8.0, 46.0)
 	var names := _vl_names(vls)
 	var m := _base(rng, vls, Vector2(-70.0, 12.0), true)
@@ -66,7 +67,8 @@ static func _defend(rng: RandomNumberGenerator) -> Dictionary:
 
 
 static func _assault(rng: RandomNumberGenerator) -> Dictionary:
-	var time_limit := 720.0 + 30.0 * rng.randi_range(0, 6)
+	# 9-10 min: the longest kind, pushed right up against the 10-minute cap.
+	var time_limit := 540.0 + 60.0 * rng.randi_range(0, 1)
 	var vls := _make_vls(rng, Game.RU, -78.0, -24.0)
 	var names := _vl_names(vls)
 	var m := _base(rng, vls, Vector2(-12.0, 52.0), true)
@@ -99,7 +101,8 @@ static func _assault(rng: RandomNumberGenerator) -> Dictionary:
 
 
 static func _meeting(rng: RandomNumberGenerator) -> Dictionary:
-	var time_limit := 600.0 + 30.0 * rng.randi_range(0, 4)
+	# 8-10 min, within the 10-minute battle cap.
+	var time_limit := 480.0 + 60.0 * rng.randi_range(0, 2)
 	var vls := _make_vls(rng, -1, -50.0, -20.0)
 	var names := _vl_names(vls)
 	var m := _base(rng, vls, Vector2(-20.0, 55.0), false)
@@ -117,7 +120,9 @@ static func _meeting(rng: RandomNumberGenerator) -> Dictionary:
 		var vid := "ru_mtlb" if i == 0 else ("ru_t72" if i >= 2 and rng.randf() < 0.3 else "ru_bmp2")
 		var msg := "Enemy racing for %s!" % String(vd[0]) if i == 0 else "More enemy moving on %s!" % String(vd[0])
 		waves.append(_wave(rng, t, vd[1], _wave_units(rng, vid, rng.randi_range(2, 3), i * 4), msg))
-		t += rng.randf_range(80.0, 140.0)
+		# Gaps compressed with the shorter battles so the last column still
+		# arrives around 60-75% of the time limit.
+		t += rng.randf_range(70.0, 110.0)
 	m["waves"] = waves
 	return m
 

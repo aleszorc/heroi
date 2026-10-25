@@ -110,11 +110,19 @@ func _unhandled_input(event: InputEvent) -> void:
 			KEY_E:
 				cam.rotate_step(1)
 			KEY_ESCAPE:
-				hud.hide_menu()
-				if mode != "":
+				# Esc backs out one layer at a time; with nothing left to
+				# cancel it offers to quit the battle (confirmed in the HUD).
+				if hud.quit_confirm_open():
+					hud.hide_quit_confirm()
+				elif mode != "":
+					hud.hide_menu()
 					set_mode("")
-				else:
+				elif selected != null:
+					hud.hide_menu()
 					select(null)
+				else:
+					hud.hide_menu()
+					hud.show_quit_confirm()
 
 
 func _press_begin(idx: int, pos: Vector2) -> void:

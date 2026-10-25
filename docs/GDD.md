@@ -10,7 +10,7 @@ Mobile real-time tactics with pause, in an isometric 3D view. You command a rein
 
 1. **You are always watched.** Drones turn concealment into the main resource. A unit that moves, fires or stands in the open gets spotted, then hit by FPVs or artillery. Trees, trenches and ruins mean survival.
 2. **Soldiers are people, not hit points.** Fire suppresses before it kills. Squads get pinned, cower and break. Your orders compete with fear.
-3. **Short battles, real decisions.** Each battle takes 8–15 minutes, so it fits a commute. A battle has a few big choices (where to defend, when to spend the mortar, what to hit with the one FPV left), not hundreds of clicks.
+3. **Short battles, real decisions.** Each battle takes 8–10 minutes (hard cap at 10), so it fits a commute. A battle has a few big choices (where to defend, when to spend the mortar, what to hit with the one FPV left), not hundreds of clicks.
 4. **Readable at a glance on a phone.** Team discs, clear state colours, chunky low-poly silhouettes, an always-visible roster.
 
 ### Tone and sensitivity
@@ -224,10 +224,11 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 
 ### 3.7b Scenarios (procedural)
 - `MissionGen.generate(kind, seed)` builds a full mission from a seed: randomized steppe (treelines with gaps, fields, roads with poles, gullies, a hamlet of 3–8 buildings near an objective, craters, wrecks), three named victory locations, deploy zone and enemy plan. The same seed reproduces the same map (combat itself stays random); kind and seed are shown on the briefing panel.
-- **Defend:** you hold three southern positions with trenches; 3–5 escalating waves attack from the north (8–13 min).
-- **Assault:** the enemy is dug in on three northern positions from the start (hold-mode defenders, plus one counterattack wave); you deploy in the south and must take a majority before time runs out (12–15 min).
-- **Meeting:** all three objectives start neutral in the middle band; enemy columns race for them from the first minute — whoever holds the majority at time-out wins (10–12 min).
-- The briefing panel has TREELINE / DEFEND / ASSAULT / MEETING buttons; the end screen offers PLAY AGAIN (same map) and NEW BATTLE (new seed). CLI: `-- kind=assault seed=7`.
+- **Every battle is capped at 10 minutes of sim time** (`Battle.TIME_CAP`); mission data may ask for less but never more. Wave schedules scale with each mission's `time_limit`, so pacing holds at any length.
+- **Defend:** you hold three southern positions with trenches; 3–5 escalating waves attack from the north (8–10 min).
+- **Assault:** the enemy is dug in on three northern positions from the start (hold-mode defenders, plus one counterattack wave); you deploy in the south and must take a majority before time runs out (9–10 min).
+- **Meeting:** all three objectives start neutral in the middle band; enemy columns race for them from the first minute — whoever holds the majority at time-out wins (8–10 min).
+- The briefing panel has TREELINE / DEFEND / ASSAULT / MEETING buttons; the end screen offers PLAY AGAIN (same map) and NEW BATTLE (new seed). The top-right quit button (confirmed with "Quit battle?") returns to the same map's briefing mid-battle. CLI: `-- kind=assault seed=7`.
 
 ### 3.8 Victory
 - Victory locations (flags) are captured by being the only side with steady troops within 16 m for 8 s.
@@ -241,12 +242,12 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 - **One finger:** tap to select or order, drag to pan. **Hold** a unit to open its command menu (Move, Fast, Sneak, Fire, Smoke, Defend, Ambush, Stop) at your finger — the only order UI; there is no bottom order bar. The hold is tracked in frame time (pause-safe) and tolerates 30 px of finger drift before it becomes a camera pan. On desktop the mouse is handled directly, not through touch emulation. **Two fingers:** pinch to zoom, drag to pan. **Buttons:** rotate the view in 90° steps.
 - **Selection:** a selected unit shows its name in yellow (no ground ring). Defend/Ambush facing is picked on a ring and shown as a translucent cone only.
 - **Top left:** clock and objectives (blue held, red lost, `!` contested).
-- **Top right:** rotate, speed (1×/2×), pause.
+- **Top right:** rotate, speed (1×/2×), pause, quit (× — opens a "Quit battle?" confirm overlay that pauses the sim; QUIT reloads the same map's briefing, KEEP PLAYING restores the previous pause state).
 - **Bottom:** roster cards (name, men alive, state colour). Tap a card to select and centre the camera.
 - **Above roster:** order bar for the selected unit.
 - **Right edge:** support (Mortar, Recon, FPV) with charges and cooldowns.
 - Armed orders show a prompt with Cancel. Events scroll in the message feed (red = bad for you, green = good).
-- **Desktop debug:** mouse acts as touch, wheel zooms, WASD pans, Q/E rotate, Space pauses, Esc cancels.
+- **Desktop debug:** mouse acts as touch, wheel zooms, WASD pans, Q/E rotate, Space pauses, Esc backs out one layer (armed order → selection → quit confirm).
 
 Planned:
 - Tree-crown fade around the selected unit.
@@ -315,7 +316,7 @@ Godot 4.7, GDScript, Mobile renderer. Everything is built in code from `scenes/m
 | `scripts/ui/*.gd` | Camera rig, input controller, HUD |
 
 - **Simulation** runs on its own clock, so pausing freezes impacts, artillery and drones while the camera and UI stay live. Large frames are split into 50 ms sub-steps.
-- **Performance:** spotting is staggered across frames. A full 12-minute battle simulates headless in about 2.5 s.
+- **Performance:** spotting is staggered across frames. A full 10-minute battle simulates headless in about 2 s.
 
 **Test hooks:**
 - `godot --headless --path . --fixed-fps 30 --quit-after 6000 -- autostart fast log` plays a whole battle with the player passive and prints the event log and result.

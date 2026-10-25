@@ -40,6 +40,9 @@ var _end_text: Label
 var _selected_box: StyleBoxFlat
 var _menu: PanelContainer
 var _menu_list: VBoxContainer
+var _quit: Control
+## Pause state to restore when the quit dialog is cancelled mid-battle.
+var _quit_was_paused := false
 var _tick := 0.0
 
 
@@ -59,6 +62,7 @@ func setup(b: Battle, c: InputController, camera: CameraRig) -> void:
 	_build_setup()
 	_build_end()
 	_build_menu()
+	_build_quit()
 	battle.message.connect(msg)
 	battle.ended.connect(_on_ended)
 	_refresh()
@@ -169,6 +173,7 @@ func _build_top() -> void:
 	tr.add_child(_speed_btn)
 	_pause_btn = _button("", toggle_pause, Vector2(58, 56), "pause")
 	tr.add_child(_pause_btn)
+	tr.add_child(_button("", show_quit_confirm, Vector2(58, 56), "cancel"))
 
 	_msgs = VBoxContainer.new()
 	_msgs.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -437,6 +442,69 @@ func show_menu(u: Unit, at: Vector2) -> void:
 func hide_menu() -> void:
 	if _menu != null:
 		_menu.visible = false
+
+
+## Confirm overlay for quitting mid-battle; one stray tap must never dump the
+## player back to the briefing, so the top-right quit button only opens this.
+func _build_quit() -> void:
+	_quit = ColorRect.new()
+	(_quit as ColorRect).color = Color(0.0, 0.0, 0.0, 0.55)
+	_quit.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_root.add_child(_quit)
+	_blockers.append(_quit)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_quit.add_child(center)
+	var panel := PanelContainer.new()
+	center.add_child(panel)
+	var col := VBoxContainer.new()
+	col.add_theme_constant_override("separation", 12)
+	panel.add_child(col)
+	var title := Label.new()
+	title.text = "Quit battle?"
+	title.add_theme_font_size_override("font_size", 30)
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	col.add_child(title)
+	var text := Label.new()
+	text.text = "Return to the briefing. This battle's progress is lost."
+	text.add_theme_color_override("font_color", Color(0.75, 0.75, 0.68))
+	col.add_child(text)
+	var btns := HBoxContainer.new()
+	btns.add_theme_constant_override("separation", 10)
+	btns.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
+	col.add_child(btns)
+	btns.add_child(_button("QUIT", _confirm_quit, Vector2(160, 56), "cancel"))
+	btns.add_child(_button("KEEP PLAYING", hide_quit_confirm, Vector2(190, 56), "play"))
+	_quit.visible = false
+
+
+## Reload into the same mission's pre-battle briefing (same map, like PLAY AGAIN).
+func _confirm_quit() -> void:
+	_restart(Game.next_kind, int(battle.mission.get("seed", 0)))
+
+
+func show_quit_confirm() -> void:
+	if battle.phase == Battle.Phase.ENDED or _quit.visible:
+		return
+	hide_menu()
+	ctl.set_mode("")
+	_quit_was_paused = Game.paused
+	Game.paused = true
+	_quit.visible = true
+	_refresh()
+
+
+func hide_quit_confirm() -> void:
+	if not _quit.visible:
+		return
+	_quit.visible = false
+	if battle.phase == Battle.Phase.BATTLE:
+		Game.paused = _quit_was_paused
+	_refresh()
+
+
+func quit_confirm_open() -> bool:
+	return _quit != null and _quit.visible
 
 
 # --- Public API ---
