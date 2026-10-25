@@ -398,10 +398,16 @@ func _build_end() -> void:
 	btns.add_theme_constant_override("separation", 10)
 	btns.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
 	col.add_child(btns)
-	# PLAY AGAIN replays the exact same map; NEW BATTLE rerolls the same kind.
-	btns.add_child(_button("PLAY AGAIN", func() -> void: _restart(Game.next_kind, int(battle.mission.get("seed", 0))), Vector2(190, 60), "rot_l"))
-	btns.add_child(_button("NEW BATTLE", func() -> void: _restart(Game.next_kind, -1), Vector2(190, 60), "fast"))
-	btns.add_child(_button("MENU", _exit_to_menu, Vector2(140, 60), "menu"))
+	if _campaign_battle():
+		# The result is already committed to the campaign; the only way is onward.
+		var cont := _button("CONTINUE", _exit_to_menu, Vector2(240, 60), "play")
+		cont.add_theme_stylebox_override("normal", _primary_box())
+		btns.add_child(cont)
+	else:
+		# PLAY AGAIN replays the exact same map; NEW BATTLE rerolls the same kind.
+		btns.add_child(_button("PLAY AGAIN", func() -> void: _restart(Game.next_kind, int(battle.mission.get("seed", 0))), Vector2(190, 60), "rot_l"))
+		btns.add_child(_button("NEW BATTLE", func() -> void: _restart(Game.next_kind, -1), Vector2(190, 60), "fast"))
+		btns.add_child(_button("MENU", _exit_to_menu, Vector2(140, 60), "menu"))
 	_end.visible = false
 
 
@@ -412,9 +418,18 @@ func _restart(kind: String, mission_seed: int) -> void:
 	get_tree().reload_current_scene()
 
 
-## Reloads the scene into the start menu.
+func _campaign_battle() -> bool:
+	return Campaign.battle_pending(Game.campaign)
+
+
+## Reloads the scene into the start menu — or back onto the campaign screen when
+## this battle belongs to the campaign (an unfinished battle can be refought).
 func _exit_to_menu() -> void:
-	Game.show_menu = true
+	if not Game.campaign.is_empty() and (_campaign_battle() or battle.phase == Battle.Phase.ENDED):
+		Game.show_campaign = true
+		Game.show_menu = false
+	else:
+		Game.show_menu = true
 	get_tree().reload_current_scene()
 
 
@@ -516,6 +531,14 @@ func on_selection(_u: Unit) -> void:
 
 func _on_ended(victory: bool, title: String, summary: String) -> void:
 	ctl.set_mode("")
+	if _campaign_battle():
+		# Commit the debrief the moment the battle ends, so the result sticks
+		# whichever way the player leaves this screen.
+		var res := Campaign.apply_result(Game.campaign, battle, victory)
+		summary += "\n\n%s\nRequisition earned: %d" % [String(res["front"]), int(res["rp"])]
+		var fallen: Array = res["fallen"]
+		if not fallen.is_empty():
+			summary += "\nFallen: %s" % ", ".join(fallen)
 	_end_title.text = title
 	_end_title.add_theme_color_override("font_color", Color(0.55, 0.85, 1.0) if victory else Color(1.0, 0.4, 0.3))
 	_end_text.text = summary

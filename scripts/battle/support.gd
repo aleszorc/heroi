@@ -24,6 +24,11 @@ var _ru_recon_at := 45.0
 
 func _init(b: Battle) -> void:
 	battle = b
+	# Campaign battles bring their own stock (support is campaign ammunition, GDD §2b.3).
+	var stock: Dictionary = b.mission.get("support", {})
+	mortar_left = int(stock.get("mortar", mortar_left))
+	fpv_left = int(stock.get("fpv", fpv_left))
+	bomber_left = int(stock.get("bomber", bomber_left))
 
 
 # --- Ukrainian support (player) ---

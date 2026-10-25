@@ -93,18 +93,18 @@ func setup(m: Dictionary) -> void:
 		vl.setup(self, vd[0], vd[1], vd[2])
 		vls.append(vl)
 	for ud: Array in m["ua_units"]:
-		spawn(ud[0], Game.UA, ud[2], ud[1])
+		spawn(ud[0], Game.UA, ud[2], ud[1], ud[3] if ud.size() > 3 else {})
 	_build_deploy_zone()
 
 
-func spawn(id: String, side: int, pos: Vector3, unit_name: String) -> Unit:
+func spawn(id: String, side: int, pos: Vector3, unit_name: String, extra := {}) -> Unit:
 	var u: Unit
 	if Defs.UNITS[id].get("vehicle", false):
 		u = VehicleUnit.new()
 	else:
 		u = InfantryUnit.new()
 	units_root.add_child(u)
-	u.setup(self, id, side, pos, unit_name)
+	u.setup(self, id, side, pos, unit_name, extra)
 	units.append(u)
 	stats["men_total"][side] += u.total_count()
 	return u

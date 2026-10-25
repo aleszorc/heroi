@@ -22,6 +22,30 @@ const WOUNDED_FIGHT := {
 	"speed": 0.6,            # speed multiplier while walking wounded
 }
 
+## Campaign (GDD §2b): one operation played as a run. All campaign balance lives here.
+## Requisition (RP) is earned per battle and buys replacement men, support charges
+## (the campaign ammunition) and whole new units.
+const CAMPAIGN := {
+	"start_requisition": 6,
+	"start_support": {"mortar": 2, "fpv": 4, "bomber": 2},
+	"rp_battle": 2,            # for fighting at all
+	"rp_victory": 3,
+	"rp_objective": 1,         # per objective held when the battle ends
+	"cost_man": 1,             # one green replacement into an existing squad
+	"cost_support": {"mortar": 2, "fpv": 1, "bomber": 3},
+	"cost_unit": {"ua_rifle": 6, "ua_mg": 4, "ua_atgm": 5, "ua_sniper": 4, "ua_drone": 4, "ua_bradley": 12},
+	"wounded_out": [1, 2],     # battles a wounded man sits out (min, max)
+	"steps": [6, 8],           # operation length in sectors (min, max)
+}
+
+## Squad veterancy (GDD §2b.2): [battles survived, morale bonus, suppression recovery
+## multiplier] per level, checked highest first. Never accuracy.
+const VETERANCY := [
+	[4, 10.0, 1.3],   # Veteran
+	[2, 5.0, 1.15],   # Experienced
+]
+const VET_NAMES := ["", "EXPERIENCED", "VETERAN"]
+
 ## range: m. reload: s between volleys. acc: hit chance at point blank in the open.
 ## supp: suppression one volley adds. pen: armour penetration, 0 = cannot hurt armour.
 ## blast: explosive radius in m, 0 = bullet. at_only: never fired at infantry.

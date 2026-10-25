@@ -20,6 +20,12 @@ var show_menu := true
 ## the mission is generated or rerolled. Its name/briefing dress the deployment
 ## screen only while next_kind/next_seed still match the preset.
 var scenario := {}
+## When true, the next scene load shows the campaign screen (GDD §2b).
+var show_campaign := false
+## The live campaign state dict (Campaign). Kept here so it survives scene reloads;
+## persisted to user://campaign.json by Campaign.save_state. While it holds a
+## "pending" entry, the current battle belongs to the campaign.
+var campaign := {}
 ## Set once the command-line mission args were read, so UI choices survive reloads.
 var cli_mission_applied := false
 

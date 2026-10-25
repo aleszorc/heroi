@@ -70,7 +70,8 @@ var _next_repos := 0.0
 
 
 func _build() -> void:
-	var men: Array = def["men"]
+	# A campaign squad deploys only the men its roster has fit to fight.
+	var men: Array = extra["men"] if not extra.get("men", []).is_empty() else def["men"]
 	var n := men.size()
 	threat = position + forward() * 60.0
 	for i in n:

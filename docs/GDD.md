@@ -32,7 +32,44 @@ Campaign map ─► Briefing & deployment ─► Battle (real-time) ─► Debri
 ```
 
 - **Battle loop (seconds):** spot, then decide (where to send units, what to attack, when to call support), then watch suppression and morale play out, then react. The units handle their own tactics.
-- **Campaign loop (minutes):** an operation is a chain of 5–8 battles on linked maps. Casualties, veterancy and ammunition carry over. Holding or losing a map changes the next battle's start line.
+- **Campaign loop (minutes):** an operation is a run of 6–9 battles along a front ribbon (§2b). Casualties, veterancy and support charges carry over. Winning or losing a battle shifts the front and sets the next battle's kind and start line.
+
+---
+
+## 2b. The campaign
+
+*Design settled and implemented 2026-10-25 (`scripts/data/campaign.gd`, `scripts/ui/campaign_screen.gd`). Still to come from M3: the extra map biomes and the curated Operation "Steppe".*
+
+The campaign is **one operation played as a run**: 6–9 battles along a strip of front, generated from a single campaign seed, with the player's platoon persisting between battles. A campaign takes about an hour of play, is resumable mid-run, and is replayable by seed — the same identity random battles already have.
+
+### 2b.1 The front ribbon
+- The operation's map is a **ribbon of sectors** (treeline belt, hamlet, gully crossing, …) drawn as a strip, not a strategic map. Each sector maps to a `MissionGen` kind, and later to a biome — the M3/M4 map types (village, industrial outskirts, river crossing) slot in as sector types.
+- Each battle's outcome moves the line: win an assault and the next sector opens; lose and the next battle is a **defend on the ground just taken**. Failure bends the front; it does not end the run.
+- Where the front allows, the player chooses between **two sectors** for the next battle (push the hamlet = assault, or meet the counterattack = meeting/defend) — the agency of a strategic map without its cost.
+- The operation ends in victory when the final objective sector is taken, and in defeat only when the platoon is combat-ineffective.
+
+### 2b.2 Persistence
+- **The platoon is the save file.** Killed soldiers are gone permanently and listed on a memorial; the wounded sit out 1–2 battles and return; replacements arrive green.
+- **Veterancy is per squad, not per man:** surviving battles raises morale cap and suppression recovery — never accuracy. Per soldier the game tracks battles survived, wounds and rescues made; there are no kill counts anywhere (tone, §1).
+
+### 2b.3 Requisition
+- One currency, earned from battle results and objectives held.
+- It buys replacements (green), support charges (mortar missions, FPV drones, bomber sorties) and one-off assets (Bradley repair, an extra team).
+- **Support charges are campaign ammunition** — no longer refilled free each battle. "When to spend the mortar" becomes a campaign decision as well as a battle one.
+
+### 2b.4 Between battles
+- One screen, in the spirit of the deployment screen: casualty report and memorial, requisition spend, sector choice where available.
+
+### 2b.5 Operation "Steppe"
+- The authored campaign (M3) is a **curated run** on this system — fixed seeds, written briefings, a scripted final battle — the same relationship the curated start-menu scenarios have to random battles.
+
+### 2b.6 Technical shape
+- Campaign state (seed, front ribbon, roster, requisition, support stock, memorial) is one JSON-safe dict held in the `Game` autoload and serialized to `user://campaign.json` (`Campaign.save_state`/`load_state`; JSON floats are coerced back through `Campaign.geti`).
+- `Campaign.dress_mission` rewrites a generated mission's title, briefing, UA platoon and support stock from the state: each `ua_units` entry gains a 4th element (roster index, deployable men, veterancy) that `Battle.spawn` passes into `Unit.setup` and `Campaign.apply_result` reads back at battle end — the debrief writer that folds casualties, wounded timers, veterancy, requisition and the front shift into the state and saves it the moment the battle ends (committed from `Hud._on_ended`, so leaving the end screen cannot dodge a defeat; abandoning a battle mid-way commits nothing and it can be refought).
+- Veterancy applies in `Unit.setup` (morale bonus) and `_update_morale` (suppression recovery multiplier) from `Defs.VETERANCY`; `Support` reads its stock from `mission["support"]`.
+- The campaign screen is built in code like `menu.gd`, over the same unit-less backdrop board.
+- All campaign balance (requisition income and prices, veterancy levels, wounded-out duration, operation length) lives in `Defs.CAMPAIGN` / `Defs.VETERANCY`.
+- Test hook: `godot --headless --path . --fixed-fps 30 --quit-after 6000 -- autostart fast log campaign [seed=N]` plays the saved campaign's next battle (first option) and commits the debrief; repeated runs walk one operation battle by battle. `-- campaign screen shots=/dir` captures the campaign screen.
 
 ---
 
@@ -242,7 +279,7 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 - **Defend:** you hold three southern positions with trenches; 3–5 escalating waves attack from the north (8–10 min).
 - **Assault:** the enemy is dug in on three northern positions from the start (hold-mode defenders, plus one counterattack wave); you deploy in the south and must take a majority before time runs out (9–10 min).
 - **Meeting:** all three objectives start neutral in the middle band; enemy columns race for them from the first minute — whoever holds the majority at time-out wins (8–10 min).
-- The start menu (`scripts/ui/menu.gd`, ГЕРОЇ wordmark over a unit-less generated backdrop) lists the curated scenarios from `scripts/data/scenarios.gd` — Treeline 7 plus six vetted kind+seed presets (Tykhyi Brid, Stari Kopani, Vovche Pole, Zhuravlyne, Mlynove, Kachyne) — and a RANDOM BATTLE entry (random kind and seed, both shown so a good map can be found again). Picking one lands on the map in deployment mode framed as the pre-battle screen (title, briefing, START BATTLE). The end screen offers PLAY AGAIN (same map), NEW BATTLE (new seed) and MENU; the in-battle menu button opens the options overlay (RESUME / RESTART / EXIT TO MENU / QUIT). CLI: `-- kind=assault seed=7` skips the menu.
+- The start menu (`scripts/ui/menu.gd`, ГЕРОЇ wordmark over a unit-less generated backdrop) lists the curated scenarios from `scripts/data/scenarios.gd` — Treeline 7 plus six vetted kind+seed presets (Tykhyi Brid, Stari Kopani, Vovche Pole, Zhuravlyne, Mlynove, Kachyne) — plus a CAMPAIGN entry (the §2b operation; CONTINUE CAMPAIGN when a save exists) and a RANDOM BATTLE entry (random kind and seed, both shown so a good map can be found again). Picking one lands on the map in deployment mode framed as the pre-battle screen (title, briefing, START BATTLE). The end screen offers PLAY AGAIN (same map), NEW BATTLE (new seed) and MENU; the in-battle menu button opens the options overlay (RESUME / RESTART / EXIT TO MENU / QUIT). CLI: `-- kind=assault seed=7` skips the menu.
 
 ### 3.8 Victory
 - Victory locations (flags on poles; the cloth waves in the wind via a shared vertex shader, phase-offset per flag by world position, recoloured on capture through instance uniforms) are captured by being the only side with steady troops within 16 m for 8 s.
@@ -299,7 +336,7 @@ Planned:
 |---|---|
 | **M1 Vertical slice (current)** | 1 map, 8 player units, 4 enemy waves, all core systems |
 | M2 Feel | Audio, tree fade, better death and wound states (medic), tutorial battle, settings, save/resume mid-battle |
-| M3 Campaign | Operation "Steppe" with 6 linked battles; persistence of men, veterancy and requisition; 3 more maps (village, industrial outskirts, river crossing) |
+| M3 Campaign | Front-ribbon run system (§2b) — **done**: campaign state and save, debrief writer, campaign screen, requisition, veterancy, memorial. Remaining: Operation "Steppe" as a curated run of 6 battles; 3 more maps (village, industrial outskirts, river crossing); balance pass on requisition prices |
 | M4 Content | Engineers and mines, EW team (jams FPVs in a radius), BMP mounted infantry, night battles with thermal sight, Leopard 2 and BMP-1 |
 | M5 Ship | Store builds for iOS and Android (a debug Android APK already builds: `godot --headless --export-debug "Android" build/heroi.apk`, package `eu.heroi.game`), performance pass on low-end Android, localisation (UK/EN first) |
 
@@ -314,6 +351,7 @@ Godot 4.7, GDScript, Mobile renderer. Everything is built in code from `scenes/m
 | `scripts/data/mission_treeline.gd` | Hand-built mission: map painting, buildings, units, waves |
 | `scripts/data/mission_gen.gd` | Procedural missions from kind + seed (assault, defend, meeting, treeline) |
 | `scripts/data/scenarios.gd` | Curated scenario presets (name, kind, seed, briefing) for the start menu |
+| `scripts/data/campaign.gd` | Campaign (§2b): state and save, front ribbon, mission dressing, debrief writer, requisition purchases |
 | `scripts/map/battle_map.gd` | Grid, terrain properties, heights, crater dimple deformation, A* paths, LOS, cover search |
 | `scripts/map/map_view.gd` | Chunked ground mesh with local rebuild, multimesh trees and props, crater mesh registry (merge-grow, no stacking), buildings, wrecks |
 | `scripts/art/mesh_factory.gd` | All procedural models (soldiers, vehicles, trees, houses, drones) |
@@ -329,7 +367,7 @@ Godot 4.7, GDScript, Mobile renderer. Everything is built in code from `scenes/m
 | `scripts/battle/drone.gd` | Recon, FPV and heavy bomber drones |
 | `scripts/battle/enemy_ai.gd` | Wave spawning and unit behaviour |
 | `scripts/battle/victory_location.gd` | Capture flags (wind-animated cloth, owner recolouring) |
-| `scripts/ui/*.gd` | Camera rig, input controller, HUD, start menu (`menu.gd`), procedural icons |
+| `scripts/ui/*.gd` | Camera rig, input controller, HUD, start menu (`menu.gd`), campaign screen (`campaign_screen.gd`), procedural icons |
 
 - **Simulation** runs on its own clock, so pausing freezes impacts, artillery and drones while the camera and UI stay live. Large frames are split into 50 ms sub-steps.
 - **Audio** is the one exception to everything-procedural: real CC0 recordings in `assets/audio/` (provenance in `assets/audio/SOURCES.md`), processed to mono WAV one-shots and MP3 loops (~3 MB). `Fx.explosion` forwards to `Sfx` so every blast sounds without per-caller hooks; drone and vehicle loops are attached by polling, not by the sim scripts. The `AudioListener3D` sits at the camera rig's ground focus, not on the camera boom.
@@ -340,6 +378,6 @@ Godot 4.7, GDScript, Mobile renderer. Everything is built in code from `scenes/m
 - `-- shots=/dir` (non-headless) saves screenshots at fixed frames.
 
 ## 10. Open questions
-1. Is the campaign one linear operation or a choice of sectors?
+1. ~~Is the campaign one linear operation or a choice of sectors?~~ Answered 2026-10-25: a front-ribbon run with two-way sector choices (§2b).
 2. Should we allow a player-controlled Russian side later? Recommendation: no.
 3. Player pause was removed (deployment and menus freeze the sim instead). Still open: a "turn-based-ish" mode that auto-pauses on contact? Auto-pause options are cheap and mobile-friendly. Recommended for M2.

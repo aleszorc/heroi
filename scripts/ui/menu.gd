@@ -62,6 +62,14 @@ func _build_left(root: Control) -> void:
 	sub.position.y = -18
 	col.add_child(tuck)
 	col.add_child(_spacer(26))
+	var camp := _button("CAMPAIGN" if Campaign.load_state().is_empty() else "CONTINUE CAMPAIGN", _campaign, Vector2(300, 66), "play")
+	col.add_child(camp)
+	var camp_hint := Label.new()
+	camp_hint.text = "One operation, one platoon. Losses,\nveterans and supplies carry over."
+	camp_hint.add_theme_font_size_override("font_size", 14)
+	camp_hint.add_theme_color_override("font_color", Color(0.6, 0.6, 0.53))
+	col.add_child(camp_hint)
+	col.add_child(_spacer(12))
 	var random := _button("RANDOM BATTLE", _random_battle, Vector2(300, 66), "fast")
 	col.add_child(random)
 	var hint := Label.new()
@@ -241,6 +249,14 @@ func _start(kind: String, mission_seed: int, scen: Dictionary) -> void:
 
 func _random_battle() -> void:
 	_start(KINDS[randi() % KINDS.size()], -1, {})
+
+
+func _campaign() -> void:
+	if _dragging:
+		return
+	Game.show_menu = false
+	Game.show_campaign = true
+	get_tree().reload_current_scene()
 
 
 # --- Styling (matches the HUD look) ---

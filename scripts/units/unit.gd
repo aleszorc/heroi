@@ -62,6 +62,13 @@ var last_spot_check := 0.0
 var selected := false
 ## Free-form state owned by EnemyAI.
 var ai := {}
+## Campaign payload this unit was spawned with (roster index, men, veterancy);
+## empty outside campaign battles. Read back by Campaign.apply_result.
+var extra := {}
+## Battles survived (campaign veterancy). Raises morale and suppression recovery,
+## never accuracy (Defs.VETERANCY).
+var vet := 0
+var _supp_recover := 1.0
 var smoke_left := 0
 var kills := 0
 ## True once a routed unit has left the map.
@@ -72,7 +79,7 @@ var _ghost: Label3D
 var _label_tick := 0.0
 
 
-func setup(b: Battle, id: String, s: int, pos: Vector3, unit_name: String) -> void:
+func setup(b: Battle, id: String, s: int, pos: Vector3, unit_name: String, ex := {}) -> void:
 	battle = b
 	map = b.map
 	def_id = id
@@ -80,7 +87,14 @@ func setup(b: Battle, id: String, s: int, pos: Vector3, unit_name: String) -> vo
 	side = s
 	display_name = unit_name
 	is_vehicle = def.get("vehicle", false)
+	extra = ex
+	vet = int(extra.get("vet", 0))
 	morale = def.get("morale", 70.0)
+	for lvl: Array in Defs.VETERANCY:
+		if vet >= int(lvl[0]):
+			morale += float(lvl[1])
+			_supp_recover = float(lvl[2])
+			break
 	smoke_left = def.get("smoke", 0)
 	heading = PI if side == Game.RU else 0.0
 	guard_dir = forward()
@@ -399,7 +413,7 @@ func morale_hit(amount: float) -> void:
 func _update_morale(dt: float) -> void:
 	since_suppressed += dt
 	if since_suppressed > 1.5:
-		suppression = maxf(0.0, suppression - dt * (7.0 + 14.0 * cover_here()))
+		suppression = maxf(0.0, suppression - dt * (7.0 + 14.0 * cover_here()) * _supp_recover)
 	if state == State.DESTROYED or state == State.ROUTED:
 		return
 	if morale <= 12.0:
