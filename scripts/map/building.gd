@@ -5,8 +5,9 @@ extends Node3D
 ## open new ways in and let fire through; when too many walls fall the roof caves in onto
 ## whoever is inside, and a gutted house becomes a heap of rubble.
 ##
-## On the grid, border cells holding intact wall are blocked; interior cells are open, so
-## infantry go in through doors and breaches.
+## On the grid, border cells holding intact wall are blocked; interior cells are open.
+## Infantry go in freely through the door opening and breaches, and can climb in slowly
+## through windows or over walls chipped low; vehicles never enter.
 
 
 class Piece:
@@ -30,6 +31,9 @@ const WALL_H := 2.8
 const THICK := 0.3
 ## A wall slot lower than this no longer stops a man climbing over.
 const PASSABLE_HEIGHT := 0.8
+## A wall slot no taller than this (a window sill, a wall chipped low) can still be
+## climbed through, slowly. Anything taller is a real wall.
+const CLIMB_HEIGHT := 1.2
 const ROOF_FAILS_AT := 0.6
 const COLLAPSES_AT := 0.3
 
@@ -110,6 +114,12 @@ func _make_walls(rng: RandomNumberGenerator, ruin: float, hp: float) -> void:
 		var n := maxi(1, int(round(length)))
 		var along_x := absf(e.x - a.x) > 0.1
 		var seg := length / n + 0.02
+		# The door opening covers every slot standing in one grid cell, so the
+		# visible gap in the wall matches the walkable cell exactly.
+		var door_cell := Vector2i(-9, -9)
+		if wi == door_wall:
+			var dp := a.lerp(e, (n / 2 + 0.5) / n)
+			door_cell = _cell_of(Vector3(dp.x, 0.0, dp.y))
 		for s in n:
 			var slot := _wall_slots
 			_wall_slots += 1
@@ -117,7 +127,7 @@ func _make_walls(rng: RandomNumberGenerator, ruin: float, hp: float) -> void:
 			var size := Vector3(seg, WALL_H, THICK) if along_x else Vector3(THICK, WALL_H, seg)
 			var cell := _cell_of(Vector3(p2.x, 0.0, p2.y))
 			_slot_cells[slot] = cell
-			if wi == door_wall and s == n / 2:
+			if cell == door_cell:
 				continue
 			var col := _wall.darkened(rng.randf_range(0.0, 0.08))
 			var h := WALL_H
@@ -144,11 +154,11 @@ func _add_piece(size: Vector3, pos: Vector3, col: Color, hp: float, slot: int, c
 	return p
 
 
-## Gable roof as six slabs (two slopes, three sections each), or a broken slab if ruined.
+## Gable roof as six slabs (two slopes, three sections each) whose ridge runs along
+## the house's long axis, eaves resting on the wall tops with a 0.3 m overhang, plus
+## gable infill closing the triangles above the end walls. A broken slab if ruined.
 func _make_roof(rng: RandomNumberGenerator, ruin: float) -> void:
 	var roof := Color(0.38, 0.40, 0.42) if rng.randf() < 0.5 else Color(0.48, 0.30, 0.22)
-	var hx := rect.size.x * 0.5 + 0.3
-	var depth := rect.size.y + 0.6
 	if ruin >= 0.6:
 		roof_down = true
 		return
@@ -157,14 +167,34 @@ func _make_roof(rng: RandomNumberGenerator, ruin: float) -> void:
 		p.xform = Transform3D(Basis(Vector3.BACK, 0.25), Vector3(-rect.size.x * 0.2, WALL_H - 0.4, 0.0))
 		p.roof = true
 		return
+	# Slopes span the shorter side; the ridge runs along the longer one.
+	var span_x := rect.size.x <= rect.size.y
+	var half := (rect.size.x if span_x else rect.size.y) * 0.5 + 0.3
+	var depth := (rect.size.y if span_x else rect.size.x) + 0.6
 	var rise := 1.6
-	var angle := atan2(rise, hx)
-	var slope_len := sqrt(hx * hx + rise * rise)
+	var angle := atan2(rise, half)
+	var slope_len := sqrt(half * half + rise * rise)
 	for sx: float in [-1.0, 1.0]:
 		for k in 3:
-			var z := -depth * 0.5 + depth * (k + 0.5) / 3.0
-			var p := _add_piece(Vector3(slope_len, 0.15, depth / 3.0 + 0.02), Vector3.ZERO, roof.darkened(k * 0.03), 60.0, -1, Vector2i(-1, -1), false)
-			p.xform = Transform3D(Basis(Vector3.BACK, -angle * sx), Vector3(sx * hx * 0.5, WALL_H + rise * 0.5, z))
+			# Each slab's centre line runs from the eave (±half, WALL_H) to the
+			# ridge (0, WALL_H + rise), so the slopes meet exactly at the ridge.
+			var along := -depth * 0.5 + depth * (k + 0.5) / 3.0
+			var size := Vector3(slope_len, 0.15, depth / 3.0 + 0.02) if span_x else Vector3(depth / 3.0 + 0.02, 0.15, slope_len)
+			var p := _add_piece(size, Vector3.ZERO, roof.darkened(k * 0.03), 60.0, -1, Vector2i(-1, -1), false)
+			var tilt := Basis(Vector3.BACK, -angle * sx) if span_x else Basis(Vector3.RIGHT, angle * sx)
+			var at := Vector3(sx * half * 0.5, WALL_H + rise * 0.5, along) if span_x else Vector3(along, WALL_H + rise * 0.5, sx * half * 0.5)
+			p.xform = Transform3D(tilt, at)
+			p.roof = true
+	# Gable triangles: stacked wall-coloured boxes narrowing with the pitch.
+	var g_width := rect.size.x if span_x else rect.size.y
+	var g_half := (rect.size.y if span_x else rect.size.x) * 0.5
+	for se: float in [-1.0, 1.0]:
+		for g in 3:
+			var f := (g + 0.5) / 3.0
+			var w := g_width * (1.0 - f)
+			var size := Vector3(w, rise / 3.0, THICK) if span_x else Vector3(THICK, rise / 3.0, w)
+			var at := Vector3(0.0, WALL_H + rise * f, se * g_half) if span_x else Vector3(se * g_half, WALL_H + rise * f, 0.0)
+			var p := _add_piece(size, at, _wall.darkened(0.06), 45.0, -1, Vector2i(-1, -1), false)
 			p.roof = true
 
 
@@ -327,30 +357,43 @@ func _collapse() -> void:
 	battle.fx.dust(position + Vector3.UP, 16, 3.0)
 
 
-func _slot_open(slot: int) -> bool:
+## 2 = freely passable (door, breach), 1 = climbable (window sill, wall chipped
+## low), 0 = blocked by intact wall. Lintels never stop movement.
+func _slot_state(slot: int) -> int:
+	var tallest := 0.0
 	for p in pieces:
-		if p.alive and p.slot == slot and not p.lintel and p.size.y >= PASSABLE_HEIGHT:
-			return false
-	return true
+		if p.alive and p.slot == slot and not p.lintel:
+			tallest = maxf(tallest, p.size.y)
+	if tallest < PASSABLE_HEIGHT:
+		return 2
+	if tallest <= CLIMB_HEIGHT:
+		return 1
+	return 0
 
 
-## Grid upkeep: walls block movement, breaches become rubble you can see and walk through.
+## Grid upkeep: intact walls block movement, doors and breaches open their cells
+## freely, window cells are slow climbs, breaches become rubble you can see and
+## walk through. A cell holds two wall slots; its best opening decides.
 func _update_map() -> void:
 	if collapsed:
 		for c in _cells:
 			map.set_cell(c, BattleMap.T.RUBBLE)
 			map.set_blocked(c, false)
+			map.set_climb(c, false)
 		return
-	var open := {}
+	var state := {}
 	var breached := {}
 	for slot: int in _slot_cells.keys():
-		if _slot_open(slot):
-			var c: Vector2i = _slot_cells[slot]
-			open[c] = true
+		var c: Vector2i = _slot_cells[slot]
+		var st := _slot_state(slot)
+		state[c] = maxi(st, int(state.get(c, 0)))
+		if st == 2:
 			for p in pieces:
 				if p.slot == slot and not p.alive:
 					breached[c] = true
 	for c: Vector2i in _border.keys():
-		map.set_blocked(c, not open.has(c))
+		var st := int(state.get(c, 0))
+		map.set_blocked(c, st < 2)
+		map.set_climb(c, st == 1)
 		if breached.has(c):
 			map.set_cell(c, BattleMap.T.RUBBLE)

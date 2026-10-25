@@ -174,7 +174,7 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 - **Reloads:** magazines run dry (AK 10 bursts, PKM 10, SVD 10 shots, RPG 1). The reload animation tilts the weapon, sends the support hand to the vest pouch and back, and blocks firing for 2.6–6 s.
 
 ### 3.6c Destructible buildings
-- **Construction:** houses are 1 m wall segments, window sills and lintels, and gable roof slabs. Every piece has hit points: brick 130, plaster 90.
+- **Construction:** houses are 1 m wall segments, window sills and lintels, and gable roof slabs. The ridge runs along the house's long axis, the eaves rest on the wall tops with a 0.3 m overhang, and wall-coloured gable infill closes the end triangles (it falls with the roof). Each house has one door: a full grid cell of wall left out, so the visible gap and the walkable cell match. Every third wall segment is a window (sill below, lintel above, open in between). Every piece has hit points: brick 130, plaster 90.
 - **Structural damage (power and radius):**
 
 | Weapon | Power | Radius |
@@ -191,8 +191,9 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
   - Partial hits knock the top off a segment.
   - Lethal hits blow the piece out as 2–4 physics debris chunks. Rigid bodies settle and freeze after 8 s; a maximum of 160 active and 500 total.
   - Shells aimed at men inside a building hit the wall on the shooter's side 70% of the time.
-- **Effect on the grid:**
-  - Wall cells block movement; doors and breaches open them.
+- **Effect on the grid (entry rules):**
+  - Infantry enter only through the door, a window, or a breach; intact wall cells block movement. Vehicles never enter.
+  - Door and breach cells are freely passable. Window cells, and walls chipped to 0.8–1.2 m, are climbable by infantry only: 3× path cost and 0.4× speed while crossing.
   - Breached cells become rubble, which can be seen and walked through.
 - **Structural failure:**
   - Below 60% standing walls, the roof caves in, hurting anyone inside.

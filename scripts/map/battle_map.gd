@@ -31,6 +31,9 @@ const SHIELD := {T.BUILDING: 0.8, T.WRECK: 0.7, T.RUBBLE: 0.55, T.TREES: 0.3}
 var cells := PackedByteArray()
 ## Cells closed to movement regardless of terrain: intact house walls.
 var blocked := PackedByteArray()
+## Blocked cells infantry can still clamber through slowly: window openings and
+## walls chipped low enough to climb over. Never passable for vehicles.
+var climb := PackedByteArray()
 var cover := PackedFloat32Array()
 var conceal := PackedFloat32Array()
 var los_keep := PackedFloat32Array()
@@ -48,6 +51,7 @@ func _init() -> void:
 	var n := W * H
 	cells.resize(n)
 	blocked.resize(n)
+	climb.resize(n)
 	cover.resize(n)
 	conceal.resize(n)
 	los_keep.resize(n)
@@ -92,7 +96,12 @@ func conceal_at(p: Vector3) -> float:
 
 ## Movement speed multiplier for the terrain under p.
 func speed_factor(p: Vector3, vehicle: bool) -> float:
-	var pr: Dictionary = PROPS[type_at(p)]
+	var c := world_to_cell(p)
+	var i := c.y * W + c.x
+	if not vehicle and blocked[i] == 1 and climb[i] == 1:
+		# Clambering through a window or over a low broken wall.
+		return 0.4
+	var pr: Dictionary = PROPS[cells[i]]
 	var cost: float = pr["veh"] if vehicle else pr["inf"]
 	if cost <= 0.0:
 		return 0.5
@@ -113,6 +122,13 @@ func set_cell(c: Vector2i, t: int) -> void:
 ## Opens or closes a cell to movement (walls going up or being blown out).
 func set_blocked(c: Vector2i, b: bool) -> void:
 	blocked[c.y * W + c.x] = 1 if b else 0
+	if _paths_ready:
+		_apply_cost(c)
+
+
+## Marks a blocked cell as climbable for infantry (windows, low broken walls).
+func set_climb(c: Vector2i, b: bool) -> void:
+	climb[c.y * W + c.x] = 1 if b else 0
 	if _paths_ready:
 		_apply_cost(c)
 
@@ -183,13 +199,17 @@ func finalize() -> void:
 
 
 func _apply_cost(c: Vector2i) -> void:
-	var pr: Dictionary = PROPS[cells[c.y * W + c.x]]
+	var i := c.y * W + c.x
+	var pr: Dictionary = PROPS[cells[i]]
 	var ci: float = pr["inf"]
 	var cv: float = pr["veh"]
-	var wall := blocked[c.y * W + c.x] == 1
-	_astar_inf.set_point_solid(c, ci <= 0.0 or wall)
+	var wall := blocked[i] == 1
+	var cl := climb[i] == 1
+	_astar_inf.set_point_solid(c, ci <= 0.0 or (wall and not cl))
 	if ci > 0.0:
-		_astar_inf.set_point_weight_scale(c, ci)
+		# A climb cell is open to infantry but costly: going through the window
+		# is the way in only when no door or breach is close.
+		_astar_inf.set_point_weight_scale(c, ci * 3.0 if wall and cl else ci)
 	_astar_veh.set_point_solid(c, cv <= 0.0 or wall)
 	if cv > 0.0:
 		_astar_veh.set_point_weight_scale(c, cv)
