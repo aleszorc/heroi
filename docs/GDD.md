@@ -53,7 +53,7 @@ Campaign map ─► Briefing & deployment ─► Battle (real-time, pausable) �
 | Rubble | .50 | .50 | 1.6 | 3.0 | .85 |
 | Wreck | .60 | .50 | 1.3 | impassable | .5 |
 
-- Trenches are dug to standing depth — about 1.7 m of real digging, drawn 2.1 world units deep to match the soldiers' 1.25× scale, with a low spoil berm on the lip — so a standing soldier is roughly head-level with the ground. Gullies sink 1.4.
+- Trenches are dug fieldworks, not dips: a sheer-sided cut with a flat floor at standing depth — about 1.7 m of real digging, drawn 2.1 world units deep to match the soldiers' 1.25× scale — so a standing soldier is roughly head-level with the ground. The walls are near-vertical dark revetment faces standing on the cell boundary (drawn by the view, with the lip kept crisp), and the spoil berm rises on every lip. Men crossing the lip play a quick hop down into the cut or a slower clamber out over the revetment (briefly slowed and unable to fire); movement along the floor is ordinary walking. Gullies stay smooth banks, sunk 1.4.
 - Craters are real heightfield deformation, not placed props: a parabolic dish (a lone shell hole is 0.4–0.6 deep, footprint and depth scale with the blast) ringed by a thrown-earth rim lip (~35% of the depth, capped at 0.3), vertex-coloured from scorched char at the centre through disturbed earth at the rim. Overlapping hits deepen the same hole toward a saturation depth of 1.2 — never beyond, and never stacked geometry. Painted CRATER cells at map build use the same profile, so pre-war shelling and fresh hits look alike. Only soft ground (open, field, road, crater) deforms; buildings, trenches, gullies and treelines keep their heights.
 - Big explosions create new craters at runtime, so cover changes as the battle goes on: the ground mesh is chunked (10×10 chunks of 12×12 cells) and a blast rebuilds only the chunks it touches.
 - Smoke grenades cut visibility to 30% per cell crossed for about 35 s.
@@ -121,7 +121,7 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 - **Movement physics:**
   - A squad's leader point follows the path and slows when men lag more than 4.5 m behind.
   - Each man steers to his formation slot with limited acceleration and eases into a stop.
-  - Men keep 1.1 m apart (more when prone) and slide along walls.
+  - Men keep 1.1 m apart (more when prone) and slide along walls. No man ever crosses an intact-wall cell — not steering to a slot, diving for cover, being dragged, or thrown by a blast: every per-soldier step goes through one wall gate, so buildings are entered only through doors, breaches or window climbs (window climbs cap a man at 40% speed). Cover search never offers a spot on the far side of an intact wall.
 - **Stance rules** (each man decides from his own position, relative to the nearest known threat):
   - **Trench, building or rubble, or behind a wall or wreck:** he ducks and only rises when he has a target. A ducked man must be up before he can fire.
   - **Open ground**, or when suppressed or on Defend: he goes prone.
@@ -203,8 +203,8 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
   - Door and breach cells are freely passable. Window cells, and walls chipped to 0.8–1.2 m, are climbable by infantry only: 3× path cost and 0.4× speed while crossing.
   - Breached cells become rubble, which can be seen and walked through.
 - **Structural failure:**
-  - Below 60% standing walls, the roof caves in, hurting anyone inside.
-  - Below 30%, the house collapses into a rubble heap.
+  - Below 60% standing walls, the roof caves in: every soldier inside the footprint is struck with 45% chance (no cover applies — the cover itself is falling), with the usual blast split of roughly a third wounded rather than killed; wounded men already on the floor can be crushed outright, and every unit in or near the house takes heavy suppression (50).
+  - Below 30%, the house collapses into a rubble heap — worse again: 70% strike chance per man inside and suppression 70, on top of the cave-in if both thresholds fall in one blow.
 
 ### 3.6d Smoke and atmosphere
 - **Puffs:** smoke, dust and flame are faceted 3D puffs (same style as the tree crowns), lit and shadow-casting. They are simulated with velocity, drag, buoyancy and wind, swell, then dither-dissolve. About 3,100 puffs in two MultiMeshes, written in one buffer per frame.

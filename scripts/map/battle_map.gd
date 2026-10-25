@@ -297,14 +297,15 @@ func _apply_cost(c: Vector2i) -> void:
 ## 1.25x scale, so a standing man is roughly head-level with the ground.
 const TRENCH_DEPTH := 2.1
 
-## Corner heights: trenches sink to standing depth with a spoil berm on the lip,
-## gullies are sunk, painted shell holes get the same dish-and-rim profile as
-## runtime blasts so pre-war shelling and fresh hits read as one system.
+## Corner heights: gullies are sunk, trench lips rise into a spoil berm, painted
+## shell holes get the same dish-and-rim profile as runtime blasts so pre-war
+## shelling and fresh hits read as one system. The trench cut itself is NOT in
+## the corner heights: a trench cell is a sheer-sided hole whose flat floor comes
+## from height_at and whose near-vertical walls are drawn by MapView on the cell
+## boundary, so the lip stays crisp instead of a 50-degree bank.
 func _build_heights() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
-	var floors := PackedByteArray()
-	floors.resize((W + 1) * (H + 1))
 	for y in H + 1:
 		for x in W + 1:
 			var trench := 0
@@ -321,25 +322,11 @@ func _build_heights() -> void:
 			var h := rng.randf_range(-0.05, 0.05)
 			if gully >= 2:
 				h -= 1.4
-			elif trench >= 2:
-				h = -TRENCH_DEPTH + rng.randf_range(-0.08, 0.08)
-				floors[y * (W + 1) + x] = 1
+			elif trench >= 1:
+				# Spoil berm: every lip corner of the cut rises, so the parapet
+				# reads from the camera and the revetment wall below it is sheer.
+				h += rng.randf_range(0.22, 0.34)
 			heights[y * (W + 1) + x] = h
-	# Spoil berm: ground-level corners beside a trench floor rise into a low lip,
-	# so the parapet reads from the camera and the wall is a clean steep bank.
-	for y in H + 1:
-		for x in W + 1:
-			var i := y * (W + 1) + x
-			if floors[i] == 1 or heights[i] < -0.6:
-				continue
-			for d: Vector2i in [Vector2i(1, 0), Vector2i(-1, 0), Vector2i(0, 1), Vector2i(0, -1)]:
-				var nx := x + d.x
-				var ny := y + d.y
-				if nx < 0 or ny < 0 or nx > W or ny > H:
-					continue
-				if floors[ny * (W + 1) + nx] == 1:
-					heights[i] += rng.randf_range(0.22, 0.34)
-					break
 	# Painted shell holes: one dish per CRATER cell; where the painting clusters,
 	# the dishes overlap and deepen toward CRATER_SAT like saturation fire.
 	for y in H:
@@ -356,6 +343,11 @@ func corner_height(x: int, y: int) -> float:
 
 
 func height_at(p: Vector3) -> float:
+	# A trench cell is a sheer-sided cut: a flat floor at full depth, the walls
+	# standing on the cell boundary rather than sloping through the corners.
+	var cc := world_to_cell(p)
+	if cells[cc.y * W + cc.x] == T.TRENCH:
+		return -TRENCH_DEPTH
 	var fx := clampf((p.x + HALF) / CELL, 0.0, W - 0.001)
 	var fz := clampf((p.z + HALF) / CELL, 0.0, H - 0.001)
 	var x0 := int(fx)
@@ -370,6 +362,32 @@ func height_at(p: Vector3) -> float:
 func is_passable(p: Vector3, vehicle: bool) -> bool:
 	var a := _astar_veh if vehicle else _astar_inf
 	return not a.is_point_solid(world_to_cell(p))
+
+
+## Whether a man may take one small step from `a` to `b`. The destination cell must
+## be open to infantry (doors, breaches and climbable windows are open; intact wall
+## is solid), and a diagonal step may not cut past a solid corner. If `a` is itself
+## inside a solid cell (which movement should never allow), any step into an open
+## cell is still permitted so nobody can be sealed in. This is the one gate all
+## per-soldier movement goes through: steering, dives, drags and dead-body slides.
+func infantry_step_open(a: Vector3, b: Vector3) -> bool:
+	var ca := world_to_cell(a)
+	var cb := world_to_cell(b)
+	if ca == cb:
+		return true
+	if _astar_inf.is_point_solid(cb):
+		return false
+	if ca.x != cb.x and ca.y != cb.y \
+			and (_astar_inf.is_point_solid(Vector2i(ca.x, cb.y)) or _astar_inf.is_point_solid(Vector2i(cb.x, ca.y))):
+		return false
+	return true
+
+
+## Blocked-but-climbable cell under p: a window opening or a wall chipped low.
+func is_climb_at(p: Vector3) -> bool:
+	var c := world_to_cell(p)
+	var i := c.y * W + c.x
+	return blocked[i] == 1 and climb[i] == 1
 
 
 ## Path in world space, excluding the start. Empty if unreachable.
@@ -529,7 +547,8 @@ func wall_entry(from: Vector3, to: Vector3) -> Vector3:
 
 
 ## Best cover cell near p for one soldier, facing a threat at `threat` when given.
-## Cells in `taken` are skipped so a squad spreads out.
+## Cells in `taken` are skipped so a squad spreads out, and cells on the far side
+## of an intact wall are never offered — a man must be able to walk there.
 func best_cover_near(p: Vector3, radius_cells: int, taken: Dictionary, threat := Vector3.INF) -> Vector3:
 	var c := world_to_cell(p)
 	var best := c
@@ -538,6 +557,8 @@ func best_cover_near(p: Vector3, radius_cells: int, taken: Dictionary, threat :=
 		for x in range(c.x - radius_cells, c.x + radius_cells + 1):
 			var cc := Vector2i(x, y)
 			if not in_bounds(cc) or taken.has(cc) or _astar_inf.is_point_solid(cc):
+				continue
+			if cc != c and not _clear_line(c, cc, INF, _astar_inf):
 				continue
 			var value := cover[y * W + x]
 			if threat != Vector3.INF:

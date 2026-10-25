@@ -93,6 +93,11 @@ func _chunk_mesh(cx: int, cy: int) -> ArrayMesh:
 			var t: int = _map.cells[y * BattleMap.W + x]
 			var col := _ground_color(t, x, y) * _cell_shade(x, y)
 			col.a = 1.0
+			if t == BattleMap.T.TRENCH:
+				# A dug fieldwork, not a dip: flat floor at full depth and sheer
+				# revetment walls standing on the cell boundary under the berm lip.
+				_trench_cell(st, x, y, col)
+				continue
 			var x0 := x * c - BattleMap.HALF
 			var z0 := y * c - BattleMap.HALF
 			var v00 := Vector3(x0, _map.corner_height(x, y), z0)
@@ -119,6 +124,69 @@ func _chunk_mesh(cx: int, cy: int) -> ArrayMesh:
 	var mesh := st.commit()
 	mesh.surface_set_material(0, MeshFactory.material())
 	return mesh
+
+
+## Cut-earth revetment colouring for the trench walls, darkening towards the floor.
+const REVET_TOP := Color(0.34, 0.27, 0.19)
+const REVET_BOTTOM := Color(0.17, 0.13, 0.09)
+
+
+## One trench cell: a flat floor quad at -TRENCH_DEPTH, and a near-vertical wall
+## quad on every edge facing a non-trench neighbour, from the bermed lip corners
+## straight down to the floor — the cut reads as revetted earth, not a bank.
+func _trench_cell(st: SurfaceTool, x: int, y: int, floor_col: Color) -> void:
+	var c := BattleMap.CELL
+	var x0 := x * c - BattleMap.HALF
+	var z0 := y * c - BattleMap.HALF
+	var yf := -BattleMap.TRENCH_DEPTH
+	var fc := floor_col.darkened(0.22)
+	fc.a = 1.0
+	st.set_color(fc)
+	st.add_vertex(Vector3(x0, yf, z0))
+	st.set_color(fc)
+	st.add_vertex(Vector3(x0 + c, yf, z0))
+	st.set_color(fc)
+	st.add_vertex(Vector3(x0 + c, yf, z0 + c))
+	st.set_color(fc)
+	st.add_vertex(Vector3(x0, yf, z0))
+	st.set_color(fc)
+	st.add_vertex(Vector3(x0 + c, yf, z0 + c))
+	st.set_color(fc)
+	st.add_vertex(Vector3(x0, yf, z0 + c))
+	# Edges listed clockwise from above, so each wall faces into the trench.
+	var edges: Array = [
+		[Vector2i(0, -1), Vector2i(x, y), Vector2i(x + 1, y)],
+		[Vector2i(1, 0), Vector2i(x + 1, y), Vector2i(x + 1, y + 1)],
+		[Vector2i(0, 1), Vector2i(x + 1, y + 1), Vector2i(x, y + 1)],
+		[Vector2i(-1, 0), Vector2i(x, y + 1), Vector2i(x, y)],
+	]
+	var shade := _cell_shade(x, y)
+	for e: Array in edges:
+		var n: Vector2i = Vector2i(x, y) + (e[0] as Vector2i)
+		if _map.in_bounds(n) and _map.cells[n.y * BattleMap.W + n.x] == BattleMap.T.TRENCH:
+			continue
+		var ca: Vector2i = e[1]
+		var cb: Vector2i = e[2]
+		var a_top := Vector3(ca.x * c - BattleMap.HALF, _map.corner_height(ca.x, ca.y), ca.y * c - BattleMap.HALF)
+		var b_top := Vector3(cb.x * c - BattleMap.HALF, _map.corner_height(cb.x, cb.y), cb.y * c - BattleMap.HALF)
+		var a_bot := Vector3(a_top.x, yf, a_top.z)
+		var b_bot := Vector3(b_top.x, yf, b_top.z)
+		var ct := REVET_TOP * shade
+		var cb2 := REVET_BOTTOM * shade
+		ct.a = 1.0
+		cb2.a = 1.0
+		st.set_color(ct)
+		st.add_vertex(a_top)
+		st.set_color(ct)
+		st.add_vertex(b_top)
+		st.set_color(cb2)
+		st.add_vertex(b_bot)
+		st.set_color(ct)
+		st.add_vertex(a_top)
+		st.set_color(cb2)
+		st.add_vertex(b_bot)
+		st.set_color(cb2)
+		st.add_vertex(a_bot)
 
 
 ## Deterministic per-cell shade jitter: stable across chunk rebuilds, so a blast

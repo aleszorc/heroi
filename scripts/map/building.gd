@@ -339,8 +339,10 @@ func _collapse_roof() -> void:
 	if had_roof:
 		battle.fx.dust(position + Vector3.UP * 1.5, 12, 2.5)
 		battle.notify_msg("A roof has caved in!", Color(1.0, 0.75, 0.45))
-		# Falling beams and tiles hurt whoever sheltered inside.
-		battle.blast(position + Vector3.UP, maxf(rect.size.x, rect.size.y) * 0.5, 0.3, 60.0, 0.0, true)
+		# Falling beams and tiles strike everyone sheltering under them: 45% of
+		# the men inside go down (the usual blast kill/wound split), and units in
+		# or near the house are heavily suppressed.
+		battle.structural_casualties(rect, 0.45, 50.0)
 
 
 ## Gutted: the remaining walls fall, the house becomes a rubble heap.
@@ -355,6 +357,9 @@ func _collapse() -> void:
 		_rubble_box(b, rng, 1.2)
 	_rubble.mesh = b.build()
 	battle.fx.dust(position + Vector3.UP, 16, 3.0)
+	battle.notify_msg("A house has collapsed!", Color(1.0, 0.65, 0.4))
+	# The walls come down on whoever is still inside: worse than the roof alone.
+	battle.structural_casualties(rect, 0.7, 70.0)
 
 
 ## 2 = freely passable (door, breach), 1 = climbable (window sill, wall chipped

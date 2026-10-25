@@ -615,11 +615,13 @@ func _do_task(s: Soldier, dt: float, neighbours: Array[Soldier]) -> void:
 			s.want_prone = 0.0
 			s.steer(dt, s.drag_to, DRAG_SPEED, push, map)
 			# The body follows on an arm's length, head first, sliding over the ground.
+			# It may never be pulled through a wall cell the rescuer walked around.
 			var to_r := Vector3(s.position.x - w.position.x, 0.0, s.position.z - w.position.z)
 			if to_r.length() > 0.01:
 				var dir := to_r.normalized()
 				var want := s.position - dir * Soldier.DRAG_DISTANCE
-				w.position = Vector3(want.x, map.height_at(want), want.z)
+				if map.infantry_step_open(w.position, want):
+					w.position = Vector3(want.x, map.height_at(want), want.z)
 				w.facing = atan2(dir.x, dir.z)
 				w.rotation.y = w.facing
 				var chest := w.position + dir * 1.15 + Vector3.UP * 0.3
@@ -878,6 +880,24 @@ func apply_blast(pos: Vector3, radius: float, lethal: float, supp: float, _pen: 
 			battle.on_died_of_wounds(self)
 	if nearest < radius * 3.0:
 		receive_suppression(supp * (1.0 - nearest / (radius * 3.0)) + 5.0)
+
+
+## The roof or the whole house is coming down on the squad (Building collapse):
+## every man inside the footprint takes a direct hit roll — no cover applies,
+## because the cover itself is falling on him — with the usual blast wound share,
+## and a wounded man already on the floor can be crushed outright.
+func struck_by_collapse(area: Rect2, hit_chance: float) -> void:
+	for s in members:
+		if not area.has_point(Vector2(s.position.x, s.position.z)):
+			continue
+		if s.alive:
+			if randf() < hit_chance:
+				var dir := Vector3(randf_range(-1.0, 1.0), 0.0, randf_range(-1.0, 1.0))
+				casualty(s, null, dir * 1.2, 0.0, randf() < WOUND_CHANCE_BLAST)
+		elif s.wounded and randf() < hit_chance * 0.6:
+			_release(s)
+			s.expire()
+			battle.on_died_of_wounds(self)
 
 
 func casualty(s: Soldier, shooter: Unit, knock: Vector3, up_speed: float, wounded := false) -> void:

@@ -33,6 +33,7 @@ var deploy_rect := Rect2()
 var stats := {"men_lost": [0, 0], "men_total": [0, 0], "vehicles_lost": [0, 0], "died_of_wounds": [0, 0]}
 
 var _scheduled: Array = []
+var _probe := false
 var _spot_i := 0
 var _end_check := 0.0
 var _deploy_mesh: MeshInstance3D
@@ -48,6 +49,7 @@ const GRENADE_FUSE := 3.6
 
 func setup(m: Dictionary) -> void:
 	mission = m
+	_probe = Game.has_arg("probe")
 	if Game.has_arg("log"):
 		message.connect(func(text: String, _c: Color) -> void: print("[%s] %s" % [clock_text(time), text]))
 		ended.connect(func(_v: bool, title: String, summary: String) -> void: print(title, "\n", summary))
@@ -290,11 +292,24 @@ func _step(dt: float) -> void:
 	_spot_step()
 	_drift_smoke(dt)
 	_sim_grenades(dt)
+	if _probe:
+		_probe_walls()
 	_end_check -= dt
 	if _end_check <= 0.0:
 		_end_check = 1.0
 		_manage_debris()
 		_check_end()
+
+
+## Dev probe (`-- probe`): asserts that no live soldier ever stands inside an
+## intact-wall cell. Per-man movement must keep them out; a hit is a regression.
+func _probe_walls() -> void:
+	for u in units:
+		if not (u is InfantryUnit):
+			continue
+		for s in (u as InfantryUnit).members:
+			if s.alive and not map.is_passable(s.position, false):
+				push_error("PROBE wall clip: %s man inside wall cell at %v, t=%.1f" % [u.display_name, s.position, time])
 
 
 # --- Scheduling (runs on simulation time, so pausing freezes it) ---
@@ -388,6 +403,22 @@ func blast(pos: Vector3, radius: float, lethal: float, supp: float, pen: float, 
 		map.mark_crater(pos, clampf(radius * 0.45, 1.5, 3.2))
 		# Dig the real heightfield and rebuild only the touched ground chunks.
 		view.refresh_ground(map.deform_crater(pos, radius))
+
+
+## A structure is coming down (roof cave-in or full collapse, Building): every
+## soldier inside the footprint takes a direct hit roll, and every unit in or
+## near the house is heavily suppressed — masonry falling around your ears.
+func structural_casualties(area: Rect2, hit_chance: float, supp: float) -> void:
+	var center := Vector3(area.get_center().x, 0.0, area.get_center().y)
+	var r := maxf(area.size.x, area.size.y) * 0.5 + 8.0
+	for u in units:
+		if not u.is_targetable():
+			continue
+		if u is InfantryUnit:
+			(u as InfantryUnit).struck_by_collapse(area, hit_chance)
+		var d := u.distance_to_point(center)
+		if d < r:
+			u.receive_suppression(supp * (1.0 - 0.5 * d / r))
 
 
 func suppress_area(pos: Vector3, r: float, amount: float, exclude: Unit, from_side: int) -> void:

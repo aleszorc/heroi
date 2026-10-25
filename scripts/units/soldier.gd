@@ -133,7 +133,8 @@ var task := ""
 var patient: Soldier = null
 var drag_to := Vector3.INF
 var task_timer := 0.0
-## Short animated actions: "" (none), "throw", "reload", "dive", "react", "getup".
+## Short animated actions: "" (none), "throw", "reload", "dive", "react", "getup",
+## "hopdown" / "clamber" (crossing a trench lip: quick jump in, slower climb out).
 var action := ""
 var action_t := 0.0
 var action_len := 0.0
@@ -218,6 +219,9 @@ var _feet_ready := false
 var _idle_step := -1
 var _idle_t := 0.0
 var _step_len := 0.7
+## Trench-lip vault: scripted start and landing points while "hopdown"/"clamber" runs.
+var _vault_from := Vector3.ZERO
+var _vault_to := Vector3.ZERO
 
 
 func setup(side: int, weapon_id: String) -> void:
@@ -468,6 +472,19 @@ func hand_point() -> Vector3:
 	return global_transform * _hand_r_sk
 
 
+## Crossing a trench lip (called from steer): scripts a short move from the lip to a
+## landing point just past it, as a quick hop down into the cut or a slower clamber
+## out over the revetment. Steering is suspended while it plays; the man cannot fire.
+func _start_vault(np: Vector3, map: BattleMap) -> void:
+	var down := map.type_at(np) == BattleMap.T.TRENCH
+	var dir := Vector3(np.x - position.x, 0.0, np.z - position.z).normalized()
+	_vault_from = position
+	var land := np + dir * 0.55
+	_vault_to = Vector3(land.x, map.height_at(land), land.z)
+	vel = dir * (1.4 if down else 0.5)
+	_start_action("hopdown" if down else "clamber", 0.45 if down else 0.85)
+
+
 func _tick_action(dt: float) -> void:
 	if action == "":
 		return
@@ -475,6 +492,11 @@ func _tick_action(dt: float) -> void:
 	if action_t >= action_len:
 		if action == "reload":
 			ammo = int(MAGS.get(weapon, [10, 2.6])[0])
+		elif action == "hopdown" or action == "clamber":
+			# Landed on the far side of the lip: replant the feet where he stands.
+			position = _vault_to
+			vel = Vector3.ZERO
+			reset_gait()
 		action = ""
 
 
@@ -487,11 +509,24 @@ func steer(dt: float, goal: Vector3, max_speed: float, push: Vector3, map: Battl
 	if dt <= 0.0:
 		return
 	if action == "dive" or action == "react":
-		# Thrown flat: momentum only, sliding to a stop.
+		# Thrown flat: momentum only, sliding to a stop. Never through a wall.
 		vel *= exp(-2.5 * dt)
 		var dp := position + vel * dt
-		if map.is_passable(dp, false):
+		if map.infantry_step_open(position, dp):
 			position = Vector3(dp.x, map.height_at(dp), dp.z)
+		return
+	if action == "hopdown" or action == "clamber":
+		# Crossing a trench lip: the body is scripted from lip to landing.
+		var vt := clampf(action_t / maxf(action_len, 0.001), 0.0, 1.0)
+		var ve := vt * vt * (3.0 - 2.0 * vt)
+		var vp := _vault_from.lerp(_vault_to, ve)
+		if action == "hopdown":
+			# Steps off and drops: late fall with a shallow arc off the lip.
+			vp.y = lerpf(_vault_from.y, _vault_to.y, ve * ve) + sin(PI * ve) * 0.25
+		else:
+			# Mantles up the revetment first, then steps out over the berm.
+			vp.y = lerpf(_vault_from.y, _vault_to.y, minf(1.0, ve * 1.3))
+		position = vp
 		return
 	if action == "getup":
 		# Rising to his feet: rooted until he is up.
@@ -513,21 +548,31 @@ func steer(dt: float, goal: Vector3, max_speed: float, push: Vector3, map: Battl
 		desired = desired.normalized() * max_speed
 	var accel := 2.0 + max_speed * 1.1
 	vel = vel.move_toward(desired, accel * dt)
+	if map.is_climb_at(position) and vel.length() > RUN_SPEED * 0.4:
+		# Clambering through a window or over a chipped wall: slow going.
+		vel = vel.normalized() * RUN_SPEED * 0.4
 	var step := vel * dt
 	var np := position + step
-	if map.is_passable(position, false) and not map.is_passable(np, false):
-		# Slide along walls rather than stopping.
+	if not map.infantry_step_open(position, np):
+		# Slide along walls rather than stopping; an intact wall cell is never
+		# crossed — the only ways in are doors, breaches and window climbs.
 		var nx := position + Vector3(step.x, 0.0, 0.0)
 		var nz := position + Vector3(0.0, 0.0, step.z)
-		if map.is_passable(nx, false):
+		if map.infantry_step_open(position, nx):
 			np = nx
 			vel.z = 0.0
-		elif map.is_passable(nz, false):
+		elif map.infantry_step_open(position, nz):
 			np = nz
 			vel.x = 0.0
 		else:
 			np = position
 			vel = Vector3.ZERO
+	if (map.type_at(np) == BattleMap.T.TRENCH) != (map.type_at(position) == BattleMap.T.TRENCH) \
+			and Vector2(np.x - position.x, np.z - position.z).length() > 0.001:
+		# Stepping over a trench lip: a quick hop down, or a slower clamber out.
+		# Moving along the trench floor stays ordinary walking.
+		_start_vault(np, map)
+		return
 	position = Vector3(np.x, map.height_at(np), np.z)
 	var speed := Vector2(vel.x, vel.z).length()
 	_accel = lerpf(_accel, (speed - _last_speed) / dt, minf(1.0, dt * 6.0))
@@ -656,6 +701,10 @@ func animate(dt: float, sim_time: float, map: BattleMap) -> void:
 	var drop := 4.0 if action == "dive" or action == "react" else 1.6
 	prone = move_toward(prone, want_prone, (drop if want_prone > prone else 1.1) * dt)
 	crouch = move_toward(crouch, want_crouch, 2.8 * dt)
+	if action == "hopdown" or action == "clamber":
+		# Knees bend over the lip: a dip into the hop, a low pull over the climb.
+		var vp := clampf(action_t / maxf(action_len, 0.001), 0.0, 1.0)
+		crouch = maxf(crouch, sin(PI * vp) * (0.55 if action == "hopdown" else 0.8))
 	var speed := Vector2(vel.x, vel.z).length()
 	# Step length grows with speed; the cadence then follows the distance actually
 	# covered, so the feet and the ground never disagree. Walking wounded limp short.
@@ -1074,7 +1123,7 @@ func _animate_dead(dt: float, map: BattleMap) -> void:
 	_toss *= exp(-(2.0 if _toss_y > 0.0 else 7.0) * dt)
 	if carried_by == null:
 		var np := position + _toss * dt
-		if map.is_passable(np, false):
+		if map.infantry_step_open(position, np):
 			position = np
 	position.y = map.height_at(position)
 	# The yaw spin from the hit twists the body while it is still falling or flying.
