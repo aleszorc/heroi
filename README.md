@@ -23,6 +23,7 @@ The audio is CC0 recordings by their original authors, credited in
 vibe-coded experiment, not an example of hand-crafted engineering.
 
 - Design: [docs/GDD.md](docs/GDD.md)
+- First run after cloning: `godot --headless --path . --import` (builds Godot's script-class cache; without it the scripts fail to parse)
 - Play on desktop: `godot --path .` (mouse = touch, wheel zoom, WASD pan, Q/E rotate, Esc options)
 - Open in the editor: `godot -e --path .`
 - Headless full-battle test: `godot --headless --path . --fixed-fps 30 --quit-after 6000 -- autostart fast log`
