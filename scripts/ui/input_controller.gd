@@ -322,7 +322,9 @@ func _apply_orient() -> void:
 		return
 	selected.order_defend(_orient_dir, m == "ambush")
 	battle.fx.order_marker(selected.position + _orient_dir * RING_RADIUS, GUARD_COLORS[m])
-	hud.on_selection(selected)
+	# The order is complete once the facing is set; drop the selection so the
+	# next tap pans or picks a new unit instead of re-ordering this one.
+	select(null)
 
 
 func set_mode(m: String) -> void:
