@@ -40,6 +40,7 @@ Key structural facts that span files:
 
 ## Conventions
 
+- Commit messages use Conventional Commits (`feat:`, `fix:`, `chore:`, …). Never mention the name "Posadka" in commit messages or anything else that leaves the repo — it is a working title.
 - `*.gd.uid` files are Godot-generated; commit them alongside their scripts, never edit them.
 - Input is touch-first (landscape phone); desktop mouse is handled directly, not through touch emulation (`emulate_touch_from_mouse=false`).
 - Tone constraints from the GDD apply to content work: fictional places/units, no gore or kill-cams, no "Z"/"V" symbolism, sober presentation.
