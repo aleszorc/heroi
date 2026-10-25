@@ -29,7 +29,9 @@ vibe-coded experiment, not an example of hand-crafted engineering.
 
 ## Install on Android
 
-Build the debug APK (one command):
+**Download the APK from the [latest release](https://github.com/aleszorc/heroi/releases/latest)**, open it on the phone, and allow installs from unknown sources when prompted.
+
+Or build the debug APK yourself (one command):
 
 ```sh
 godot --headless --path . --export-debug "Android" build/heroi.apk
