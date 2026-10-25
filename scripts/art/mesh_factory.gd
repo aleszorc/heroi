@@ -1185,6 +1185,84 @@ static func flag_pole() -> ArrayMesh:
 	return mesh
 
 
+## Flag cloth: a subdivided plane hoisted at x=0, free edge at x=FLAG_LENGTH, waved by
+## the vertex shader in flag_cloth_material(). UV.x runs hoist->fly, UV.y bottom->top.
+const FLAG_LENGTH := 1.8
+const FLAG_HEIGHT := 1.1
+
+
+static func flag_cloth() -> ArrayMesh:
+	if _cache.has("flag_cloth"):
+		return _cache["flag_cloth"]
+	var segs_x := 8
+	var segs_y := 4
+	var st := SurfaceTool.new()
+	st.begin(Mesh.PRIMITIVE_TRIANGLES)
+	var put := func(ix: int, iy: int) -> void:
+		var u := float(ix) / segs_x
+		var v := float(iy) / segs_y
+		st.set_uv(Vector2(u, v))
+		st.set_normal(Vector3(0.0, 0.0, 1.0))
+		st.add_vertex(Vector3(u * FLAG_LENGTH, (v - 0.5) * FLAG_HEIGHT, 0.0))
+	for iy in segs_y:
+		for ix in segs_x:
+			put.call(ix, iy)
+			put.call(ix + 1, iy + 1)
+			put.call(ix + 1, iy)
+			put.call(ix, iy)
+			put.call(ix, iy + 1)
+			put.call(ix + 1, iy + 1)
+	var mesh := st.commit()
+	mesh.surface_set_material(0, flag_cloth_material())
+	_cache["flag_cloth"] = mesh
+	return mesh
+
+
+static var _flag_mat: ShaderMaterial
+
+
+## The one shared waving-cloth material. A travelling sine wave runs hoist->fly with
+## amplitude growing toward the free edge, plus a slight vertical ripple; the phase is
+## offset by world position so multiple flags never wave in lockstep. Stripe colours
+## are per-instance uniforms (set_instance_shader_parameter), so every flag shares this
+## material whatever its owner. Runs on raw TIME: ambient presentation, like the camera,
+## so flags keep waving while the sim is paused.
+static func flag_cloth_material() -> ShaderMaterial:
+	if _flag_mat == null:
+		var sh := Shader.new()
+		sh.code = """
+shader_type spatial;
+render_mode cull_disabled, specular_disabled;
+
+instance uniform vec4 top_color : source_color = vec4(0.5, 0.5, 0.5, 1.0);
+instance uniform vec4 bottom_color : source_color = vec4(0.5, 0.5, 0.5, 1.0);
+
+varying float band;
+
+void vertex() {
+	float phase = MODEL_MATRIX[3].x * 0.9 + MODEL_MATRIX[3].z * 1.3;
+	float t = TIME * 5.5 + phase;
+	float u = UV.x;
+	float arg = u * 7.0 - t;
+	float amp = 0.16 * u;
+	VERTEX.z += sin(arg) * amp;
+	VERTEX.y += sin(arg * 0.7 + 1.7) * 0.05 * u;
+	float slope = (cos(arg) * amp * 7.0 + sin(arg) * 0.16) / 1.8;
+	NORMAL = normalize(vec3(-slope, 0.0, 1.0));
+	band = UV.y;
+}
+
+void fragment() {
+	ALBEDO = mix(bottom_color.rgb, top_color.rgb, step(0.5, band));
+	ROUGHNESS = 1.0;
+	NORMAL = FRONT_FACING ? NORMAL : -NORMAL;
+}
+"""
+		_flag_mat = ShaderMaterial.new()
+		_flag_mat.shader = sh
+	return _flag_mat
+
+
 ## One faceted puff of smoke, dust or flame (white; tinted per instance). Unit diameter.
 static func puff() -> ArrayMesh:
 	if _cache.has("puff"):

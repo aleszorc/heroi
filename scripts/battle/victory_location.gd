@@ -10,8 +10,7 @@ var loc_name := ""
 var owner_side := -1
 var progress := 0.0
 var contested := false
-var _top_mat := StandardMaterial3D.new()
-var _bottom_mat := StandardMaterial3D.new()
+var _cloth: MeshInstance3D
 var _ring_mat := StandardMaterial3D.new()
 
 
@@ -22,14 +21,10 @@ func setup(b: Battle, n: String, pos: Vector3, start_owner: int) -> void:
 	var pole := MeshInstance3D.new()
 	pole.mesh = MeshFactory.flag_pole()
 	add_child(pole)
-	for i in 2:
-		var cloth := MeshInstance3D.new()
-		var box := BoxMesh.new()
-		box.size = Vector3(1.8, 0.55, 0.05)
-		cloth.mesh = box
-		cloth.position = Vector3(0.95, 5.65 - i * 0.55, 0.0)
-		cloth.material_override = _top_mat if i == 0 else _bottom_mat
-		add_child(cloth)
+	_cloth = MeshInstance3D.new()
+	_cloth.mesh = MeshFactory.flag_cloth()
+	_cloth.position = Vector3(0.05, 5.925 - MeshFactory.FLAG_HEIGHT * 0.5, 0.0)
+	add_child(_cloth)
 	var ring := MeshInstance3D.new()
 	var torus := TorusMesh.new()
 	torus.inner_radius = RADIUS - 0.35
@@ -61,8 +56,8 @@ func _set_owner(s: int, announce: bool) -> void:
 	elif s == Game.RU:
 		top = Color(0.8, 0.15, 0.12)
 		bottom = top
-	_top_mat.albedo_color = top
-	_bottom_mat.albedo_color = bottom
+	_cloth.set_instance_shader_parameter("top_color", top)
+	_cloth.set_instance_shader_parameter("bottom_color", bottom)
 	var rc := Color(0.7, 0.7, 0.7) if s < 0 else Game.SIDE_COLORS[s]
 	rc.a = 0.5
 	_ring_mat.albedo_color = rc
