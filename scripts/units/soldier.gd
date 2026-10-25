@@ -460,13 +460,23 @@ func recover() -> void:
 	_inert_t = 0.0
 	_sig_ready = false
 	_w_sp_init = false
+	# He lies on his back with his head the other way; the live pose rises belly-down.
+	# Turn the node 180° and counter-rotate the captured pose (identical on screen):
+	# the blend's shortest path is then a roll around his long axis onto his front,
+	# and the push-up follows — instead of an end-over-end cartwheel through vertical.
+	facing += PI
+	aim_yaw = facing
+	rotation.y = facing
+	_recover_q[B.ROOT] = Quaternion(Vector3.UP, PI) * _recover_q[B.ROOT]
+	_recover_root = Vector3(-_recover_root.x, _recover_root.y, -_recover_root.z)
 	prone = 1.0
+	_prone_sp.set_to(1.0)
 	want_prone = 0.0
 	want_crouch = 0.5
 	cover_pos = position
 	vel = Vector3.ZERO
 	reset_gait()
-	_start_action("getup", 1.4)
+	_start_action("getup", 1.9)
 
 
 ## Derives `st` from the authoritative facts. Called every animation tick; the
@@ -751,9 +761,11 @@ func animate(dt: float, sim_time: float, map: BattleMap) -> void:
 		if gesture_t >= gesture_len or prone > 0.3 or cowering:
 			gesture = ""
 	# Stances blend on critically damped springs: going flat is urgent (and urgent-er
-	# when diving), getting back up is deliberate.
-	var p_hl := (0.07 if action == "dive" or action == "react" else 0.18) if want_prone > prone else 0.32
-	prone = clampf(_prone_sp.track(want_prone, p_hl, dt), 0.0, 1.0)
+	# when diving), getting back up is deliberate. A revived man stays flat through
+	# the first part of the get-up — he is still rolling onto his front.
+	var wp := 1.0 if action == "getup" and action_t < 0.6 else want_prone
+	var p_hl := (0.07 if action == "dive" or action == "react" else 0.18) if wp > prone else 0.32
+	prone = clampf(_prone_sp.track(wp, p_hl, dt), 0.0, 1.0)
 	crouch = clampf(_crouch_sp.track(want_crouch, 0.12, dt), 0.0, 1.0)
 	if action == "hopdown" or action == "clamber":
 		# Knees bend over the lip: a dip into the hop, a low pull over the climb.

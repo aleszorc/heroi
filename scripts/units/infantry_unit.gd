@@ -113,7 +113,7 @@ func _take_cover() -> void:
 	_cover_age = 0.0
 	for s in members:
 		if s.alive:
-			s.cover_pos = map.best_cover_near(position + _slot_offset(s.slot) * 0.8, 2, taken, threat)
+			s.cover_pos = map.best_cover_near(position + _slot_offset(s.slot), 2, taken, threat)
 
 
 ## Puts everyone straight into cover and stance (deployment, spawning).
@@ -552,12 +552,15 @@ func _move_members(dt: float) -> void:
 				goal = _trail_target(s)
 				feed = _leader_vel
 		var push := Vector3.ZERO
+		# Combat spacing: men keep a good arm's-length-plus apart (tighter only in a
+		# building-entry stack), and more when prone, so nobody walks over anybody.
+		var sep := 1.0 if _formation == Form.STACK else 1.6
 		for o in neighbours:
 			if o == s or not o.alive:
 				continue
 			var away := Vector3(s.position.x - o.position.x, 0.0, s.position.z - o.position.z)
 			var d := away.length()
-			var min_d := 1.1 + 0.5 * maxf(s.prone, o.prone)
+			var min_d := sep + 0.5 * maxf(s.prone, o.prone)
 			if d < min_d and d > 0.001:
 				push += away / d * (min_d - d) * 4.0
 		if s.cooldown > 0.0 or battle.time > s.engage_until:
@@ -573,8 +576,8 @@ func _push_from(s: Soldier, neighbours: Array[Soldier]) -> Vector3:
 			continue
 		var away := Vector3(s.position.x - o.position.x, 0.0, s.position.z - o.position.z)
 		var d := away.length()
-		if d < 1.0 and d > 0.001:
-			push += away / d * (1.0 - d) * 4.0
+		if d < 1.3 and d > 0.001:
+			push += away / d * (1.3 - d) * 4.0
 	return push
 
 

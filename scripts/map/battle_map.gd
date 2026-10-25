@@ -572,4 +572,10 @@ func best_cover_near(p: Vector3, radius_cells: int, taken: Dictionary, threat :=
 				best_score = score
 				best = cc
 	taken[best] = true
+	# The adjacent cells are blocked too, so men sharing one `taken` dict spread out
+	# (two cells = 4 m along a line, 2.8 m diagonally) instead of stacking on one bush.
+	taken[best + Vector2i(1, 0)] = true
+	taken[best + Vector2i(-1, 0)] = true
+	taken[best + Vector2i(0, 1)] = true
+	taken[best + Vector2i(0, -1)] = true
 	return cell_to_world(best) + Vector3(randf_range(-0.4, 0.4), 0.0, randf_range(-0.4, 0.4))
