@@ -180,23 +180,25 @@ func mark_crater(p: Vector3, r := 1.5) -> void:
 	paint_disc(Vector2(p.x, p.z), r, T.CRATER, [T.OPEN, T.FIELD, T.ROAD])
 
 
-## Crater deformation: a lone shell hole dishes 0.4-0.6 into the ground with a
-## thrown-earth rim; repeated hits on the same spot deepen the hole toward
-## CRATER_SAT and never beyond, so saturation fire churns the field flat-bottomed
-## instead of digging to the mantle or piling geometry.
-const CRATER_SAT := 1.2
-const CRATER_RIM_MAX := 0.3
+## Crater deformation: a shallow scorched dimple under the crater MESH, which is
+## what carries the visual (MapView.spawn_crater). A lone hit dishes ~0.3 so the
+## mesh sits in a slight hollow, soldiers duck into it and the ground never
+## z-fights the mesh; repeated hits deepen it toward CRATER_SAT and never beyond,
+## so saturation fire churns the field flat-bottomed instead of digging to the
+## mantle or piling geometry.
+const CRATER_SAT := 0.6
+const CRATER_RIM_MAX := 0.12
 ## Ground soft enough to dig. A corner deforms only when every cell touching it is
 ## soft, so buildings, trenches, gullies, rubble and treelines keep their built heights.
 const CRATER_SOFT := [T.OPEN, T.FIELD, T.ROAD, T.CRATER]
 
 
-## Digs a real crater into the heightfield: a dished centre with a raised rim lip,
+## Dishes the shallow crater dimple into the heightfield, with a slight rim lift,
 ## both scaled by the blast radius. Returns the affected cell rect so the view can
 ## rebuild just those ground chunks.
 func deform_crater(p: Vector3, blast_radius: float) -> Rect2i:
 	var dish_r := clampf(blast_radius * 0.45, 1.5, 3.2)
-	var depth := clampf(blast_radius * 0.08, 0.4, 0.6)
+	var depth := clampf(blast_radius * 0.05, 0.24, 0.3)
 	var rng := RandomNumberGenerator.new()
 	rng.seed = hash(Vector2i(int(p.x * 7.3), int(p.z * 7.3)))
 	_apply_crater(Vector2(p.x, p.z), dish_r, depth, 0.35 * depth, rng)
@@ -335,7 +337,7 @@ func _build_heights() -> void:
 				continue
 			var p := cell_to_world(Vector2i(x, y))
 			var c2 := Vector2(p.x + rng.randf_range(-0.5, 0.5), p.z + rng.randf_range(-0.5, 0.5))
-			_apply_crater(c2, 2.7, 0.42, 0.12, rng)
+			_apply_crater(c2, 2.7, 0.26, 0.07, rng)
 
 
 func corner_height(x: int, y: int) -> float:

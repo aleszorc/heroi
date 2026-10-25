@@ -14,6 +14,18 @@ const DISTURBED := Color(0.20, 0.155, 0.11)
 ## Spoil dirt thrown up around trenches: churned mud fading out over ~2 cells.
 const TRENCH_DIRT := Color(0.24, 0.185, 0.125)
 
+## Crater meshes merge instead of stacking: a new hole whose centre is closer than
+## CRATER_MERGE x the summed rim radii to a live crater would interpenetrate rim
+##-through-rim, so it grows that crater instead of spawning a second mesh. Distinct
+## but touching craters still both exist — real crater fields overlap at the edges.
+const CRATER_MERGE := 0.55
+## Each merged hit widens the hole by CRATER_GROW until the rim radius saturates at
+## CRATER_R_CAP (a churned artillery-sized pit), and wets it darker toward TONE_MIN.
+const CRATER_GROW := 1.16
+const CRATER_R_CAP := 4.0
+const CRATER_TONE_STEP := 0.94
+const CRATER_TONE_MIN := 0.72
+
 var _map: BattleMap
 var _chunks: Array[MeshInstance3D] = []
 ## Per-corner spoil-dirt strength around trench cells, built once (trenches never
@@ -23,6 +35,11 @@ var _trench_dirt := PackedFloat32Array()
 ## under them is dug out by a blast.
 var _bush_mm: MultiMesh
 var _bush_xf: Array = []
+## Registry of live crater meshes — build-time scattered and runtime blast holes
+## alike — so overlapping blasts grow one hole instead of stacking meshes. Entries:
+## pos (Vector3), r (world rim radius), basis (yaw + elliptical scale), tone, and
+## either mi (runtime MeshInstance3D) or mm+idx (a scattered multimesh instance).
+var _craters: Array = []
 
 
 func build(map: BattleMap, mission: Dictionary) -> void:
@@ -237,13 +254,13 @@ func _vert_color(base: Color, x: int, y: int) -> Color:
 			col = col.lerp(TRENCH_DIRT, dirt * 0.85)
 	var dig: float = _map.crater_depth[i]
 	if dig > 0.0:
-		var t := clampf(dig / 0.55, 0.0, 1.0)
+		var t := clampf(dig / 0.3, 0.0, 1.0)
 		col = col.lerp(DISTURBED, minf(t * 2.0, 1.0))
 		if t > 0.5:
 			col = col.lerp(SCORCHED, (t - 0.5) * 2.0)
 	var rim: float = _map.crater_rim[i]
 	if rim > 0.0:
-		col = col.lerp(DISTURBED, clampf(rim / 0.18, 0.0, 1.0) * 0.7)
+		col = col.lerp(DISTURBED, clampf(rim / 0.1, 0.0, 1.0) * 0.7)
 	col.a = 1.0
 	return col
 
@@ -339,20 +356,132 @@ func _build_scatter(map: BattleMap) -> void:
 				var q := p + Vector3(0.0, 0.0, -3.0)
 				q.y = map.height_at(q) + 0.02
 				bags.append(Transform3D(Basis(Vector3.UP, rng.randf_range(-0.15, 0.15)), q))
+			elif t == BattleMap.T.CRATER and rng.randf() < 0.45:
+				# Rimmed shell-hole meshes dress the dimpled CRATER cells; where the
+				# painting clusters, the merge rule grows one hole instead of piling
+				# rims on top of each other.
+				p += Vector3(rng.randf_range(-0.6, 0.6), 0.0, rng.randf_range(-0.6, 0.6))
+				_add_crater(p, rng.randi() % MeshFactory.CRATER_VARIANTS, rng.randf_range(0.55, 0.95), rng)
 	_bush_mm = _multimesh(MeshFactory.bush(), bushes)
 	_bush_xf = bushes
 	_multimesh(MeshFactory.sandbags(), bags)
+	# One multimesh per crater variant; instance colors carry per-hole tone.
+	var per_variant: Array = []
+	for v in MeshFactory.CRATER_VARIANTS:
+		per_variant.append([])
+	for c: Dictionary in _craters:
+		per_variant[c["variant"]].append(c)
+	for v in MeshFactory.CRATER_VARIANTS:
+		var recs: Array = per_variant[v]
+		var xfs: Array = []
+		var cols: Array = []
+		for c: Dictionary in recs:
+			xfs.append(Transform3D(c["basis"], c["pos"]))
+			cols.append(Color(c["tone"], c["tone"], c["tone"]))
+		var mm := _multimesh(MeshFactory.crater(v), xfs, cols)
+		for i in recs.size():
+			recs[i]["mm"] = mm
+			recs[i]["idx"] = i
 
 
-func _multimesh(mesh: Mesh, list: Array) -> MultiMesh:
+## A fresh shell-hole mesh at runtime, sized by the blast that dug it. When the hit
+## lands on a live crater (merge rule above) that crater grows and darkens instead,
+## so repeated shelling of one spot deepens one hole, never a stack of rims.
+func spawn_crater(pos: Vector3, blast_radius := 4.0) -> void:
+	if _map == null:
+		return
+	var rng := RandomNumberGenerator.new()
+	rng.randomize()
+	var scale := clampf(blast_radius * 0.2, 0.6, 1.5)
+	var c := _add_crater(pos, rng.randi() % MeshFactory.CRATER_VARIANTS, scale, rng)
+	if c["mm"] != null or c["mi"] != null:
+		# Merged into a live crater: _add_crater already grew its mesh.
+		return
+	# A brand-new hole: give it its own MeshInstance3D (bounded — merging keeps the
+	# count down) with a tone-bucketed material for per-instance colour variation.
+	var mi := MeshInstance3D.new()
+	mi.mesh = MeshFactory.crater(c["variant"])
+	mi.material_override = MeshFactory.tone_material(c["tone"])
+	mi.transform = Transform3D(c["basis"], c["pos"])
+	add_child(mi)
+	c["mi"] = mi
+
+
+## Registers one crater: merges into a too-close live crater (returning it, grown)
+## or appends a new record with per-instance yaw, elliptical XZ scale and tone.
+## A new record has neither mm nor mi yet — the caller gives it its visual.
+func _add_crater(pos: Vector3, variant: int, scale: float, rng: RandomNumberGenerator) -> Dictionary:
+	var r_new: float = MeshFactory.CRATER_R[variant] * scale
+	var best := {}
+	var best_d := INF
+	for c: Dictionary in _craters:
+		var d := Vector2(c["pos"].x - pos.x, c["pos"].z - pos.z).length()
+		if d < CRATER_MERGE * (c["r"] + r_new) and d < best_d:
+			best = c
+			best_d = d
+	if not best.is_empty():
+		_grow_crater(best, pos)
+		return best
+	var sx := scale * rng.randf_range(0.85, 1.15)
+	var sz := scale * rng.randf_range(0.85, 1.15)
+	var sy := scale * rng.randf_range(0.8, 1.05)
+	var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(sx, sy, sz))
+	var r := MeshFactory.CRATER_R[variant] * maxf(sx, sz)
+	var p := pos
+	p.y = _crater_seat(pos, r)
+	var c := {"pos": p, "r": r, "basis": basis, "variant": variant,
+			"tone": rng.randf_range(0.86, 1.06), "mm": null, "mi": null, "idx": -1}
+	_craters.append(c)
+	return c
+
+
+## Widen, re-seat and re-darken a live crater that took another hit. The rim radius
+## saturates at CRATER_R_CAP; the centre drifts a little toward the new impact so
+## repeated shelling reads as one churned pit, not a mesh pinned to the first hit.
+func _grow_crater(c: Dictionary, hit: Vector3) -> void:
+	if c["r"] < CRATER_R_CAP:
+		var g := minf(CRATER_GROW, CRATER_R_CAP / c["r"])
+		c["r"] *= g
+		c["basis"] = (c["basis"] as Basis).scaled(Vector3(g, minf(g, 1.08), g))
+	c["tone"] = maxf(c["tone"] * CRATER_TONE_STEP, CRATER_TONE_MIN)
+	var p: Vector3 = c["pos"]
+	p.x = lerpf(p.x, hit.x, 0.2)
+	p.z = lerpf(p.z, hit.z, 0.2)
+	p.y = _crater_seat(p, c["r"])
+	c["pos"] = p
+	var xf := Transform3D(c["basis"], p)
+	if c["mi"] != null:
+		c["mi"].transform = xf
+		c["mi"].material_override = MeshFactory.tone_material(c["tone"])
+	elif c["mm"] != null:
+		c["mm"].set_instance_transform(c["idx"], xf)
+		c["mm"].set_instance_color(c["idx"], Color(c["tone"], c["tone"], c["tone"]))
+
+
+## Where the mesh base sits: on the ground at the rim ring, not at the dimpled
+## centre — the lip must stand proud of the field while the charred floor hangs
+## down into the shallow heightfield dish beneath it.
+func _crater_seat(pos: Vector3, r: float) -> float:
+	var h := 0.0
+	for k in 4:
+		var a := k * TAU / 4.0
+		h += _map.height_at(pos + Vector3(cos(a), 0.0, sin(a)) * r)
+	h *= 0.25
+	return minf(h, _map.height_at(pos) + 0.22) + 0.02
+
+
+func _multimesh(mesh: Mesh, list: Array, colors: Array = []) -> MultiMesh:
 	if list.is_empty():
 		return null
 	var mm := MultiMesh.new()
 	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = not colors.is_empty()
 	mm.mesh = mesh
 	mm.instance_count = list.size()
 	for i in list.size():
 		mm.set_instance_transform(i, list[i])
+		if not colors.is_empty():
+			mm.set_instance_color(i, colors[i])
 	var mmi := MultiMeshInstance3D.new()
 	mmi.multimesh = mm
 	add_child(mmi)

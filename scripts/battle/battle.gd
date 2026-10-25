@@ -401,8 +401,10 @@ func blast(pos: Vector3, radius: float, lethal: float, supp: float, pen: float, 
 				b.damage(pos, struct_power, struct_radius)
 	if radius >= 4.0 and map.type_at(pos) != BattleMap.T.BUILDING:
 		map.mark_crater(pos, clampf(radius * 0.45, 1.5, 3.2))
-		# Dig the real heightfield and rebuild only the touched ground chunks.
+		# Dish the shallow scorched dimple and rebuild only the touched ground
+		# chunks, then seat the crater mesh (the visual) into the hollow.
 		view.refresh_ground(map.deform_crater(pos, radius))
+		view.spawn_crater(pos, radius)
 
 
 ## A structure is coming down (roof cave-in or full collapse, Building): every

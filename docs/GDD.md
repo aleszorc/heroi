@@ -54,7 +54,9 @@ Campaign map ─► Briefing & deployment ─► Battle (real-time, pausable) �
 | Wreck | .60 | .50 | 1.3 | impassable | .5 |
 
 - Trenches are dug fieldworks, not dips: a sheer-sided cut with a flat floor at standing depth — about 1.7 m of real digging, drawn 2.1 world units deep to match the soldiers' 1.25× scale — so a standing soldier is roughly head-level with the ground. The walls are near-vertical dark revetment faces standing on the cell boundary (drawn by the view, with the lip kept crisp), and the spoil berm rises on every lip. Men crossing the lip play a quick hop down into the cut or a slower clamber out over the revetment (briefly slowed and unable to fire); movement along the floor is ordinary walking. Gullies stay smooth banks, sunk 1.4.
-- Craters are real heightfield deformation, not placed props: a parabolic dish (a lone shell hole is 0.4–0.6 deep, footprint and depth scale with the blast) ringed by a thrown-earth rim lip (~35% of the depth, capped at 0.3), vertex-coloured from scorched char at the centre through disturbed earth at the rim. Overlapping hits deepen the same hole toward a saturation depth of 1.2 — never beyond, and never stacked geometry. Painted CRATER cells at map build use the same profile, so pre-war shelling and fresh hits look alike. Only soft ground (open, field, road, crater) deforms; buildings, trenches, gullies and treelines keep their heights.
+- Craters are premade rimmed-dish meshes in the dark wet-earth family of the trench spoil: 8 variants (rim radius 1.1–2.4 m, saucers with low lips through deep bowls under heavy spoil rims, varying spoke counts and elliptical asymmetry), each instance with random yaw, non-uniform XZ scale and a per-instance tone. They are scattered on painted CRATER cells at map build (in per-variant MultiMeshes) and spawned per big blast at runtime, scaled with the blast radius (FPV small, artillery big).
+- Crater meshes never stack: a registry of live craters merges a new hole whose centre lands closer than 0.55× the summed rim radii to an existing one — that crater grows ~16% per hit toward a 4 m rim-radius cap, darkens toward a wet-mud floor tone and drifts slightly toward the new impact, so repeated shelling of one spot deepens one churned pit. Distinct-but-touching craters still coexist, like a real crater field.
+- Under each mesh the heightfield keeps only a shallow scorched dimple (a lone hit ~0.3 deep, repeated hits saturating at 0.6, rim lift capped at 0.12), vertex-coloured from scorched char through disturbed earth: the mesh sits in a slight hollow, soldiers duck into it and the ground never z-fights the mesh. Painted CRATER cells get the same dimple at build. Only soft ground (open, field, road, crater) deforms; buildings, trenches, gullies and treelines keep their heights.
 - Big explosions create new craters at runtime, so cover changes as the battle goes on: the ground mesh is chunked (10×10 chunks of 12×12 cells) and a blast rebuilds only the chunks it touches.
 - Smoke grenades cut visibility to 30% per cell crossed for about 35 s.
 
@@ -308,8 +310,8 @@ Godot 4.7, GDScript, Mobile renderer. Everything is built in code from `scenes/m
 | `scripts/core/game.gd` | Autoload: pause and speed, side constants, test arguments |
 | `scripts/data/defs.gd` | Weapon and unit tables (all balance numbers) |
 | `scripts/data/mission_treeline.gd` | Mission: map painting, buildings, units, waves |
-| `scripts/map/battle_map.gd` | Grid, terrain properties, heights, crater deformation, A* paths, LOS, cover search |
-| `scripts/map/map_view.gd` | Chunked ground mesh with local rebuild, multimesh trees and props, buildings, wrecks |
+| `scripts/map/battle_map.gd` | Grid, terrain properties, heights, crater dimple deformation, A* paths, LOS, cover search |
+| `scripts/map/map_view.gd` | Chunked ground mesh with local rebuild, multimesh trees and props, crater mesh registry (merge-grow, no stacking), buildings, wrecks |
 | `scripts/art/mesh_factory.gd` | All procedural models (soldiers, vehicles, trees, houses, drones) |
 | `scripts/units/*.gd` | `Unit` base (orders, morale, spotting state), `InfantryUnit`, `Soldier` (rig, animation, steering), `VehicleUnit` |
 | `scripts/map/building.gd` | Destructible houses: pieces, damage, debris, roof collapse, grid upkeep |

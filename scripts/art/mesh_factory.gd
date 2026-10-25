@@ -870,6 +870,106 @@ static func bush() -> ArrayMesh:
 	return mesh
 
 
+const CRATER_VARIANTS := 8
+
+## Per-variant footprint character. Radius is the rim radius in metres; lip and floor
+## factors vary the silhouette from wide shallow saucers with a low thrown lip to
+## tight deep bowls under a heavy spoil rim, so a crater field never tiles visibly.
+const CRATER_R: Array[float] = [1.1, 1.35, 1.5, 1.6, 1.8, 2.0, 2.2, 2.4]
+const _CRATER_LIP: Array[float] = [0.7, 1.25, 0.55, 1.0, 1.35, 0.8, 1.15, 0.95]
+const _CRATER_FLOOR: Array[float] = [0.46, 0.32, 0.55, 0.40, 0.30, 0.48, 0.36, 0.42]
+const _CRATER_SPOKES: Array[int] = [9, 10, 11, 10, 12, 10, 11, 12]
+
+## Dark wet-earth family shared with the map's trench spoil and crater scorch, so the
+## mesh ties into the vertex-tinted ground beneath it.
+const CRATER_EARTH := Color(0.21, 0.165, 0.115)
+const CRATER_WALL := Color(0.13, 0.10, 0.075)
+const CRATER_CHARRED := Color(0.085, 0.07, 0.06)
+
+
+## Shell crater: an irregular, slightly elliptical raised lip of thrown-up earth around
+## a dished interior that grades from disturbed mud at the rim through a dark wall to a
+## charred centre. The mesh sits ON the ground, in the shallow scorched dimple the blast
+## leaves in the heightfield — the lip and the dark grading carry the depth. `variant`
+## picks one of CRATER_VARIANTS footprints; -1 picks one at random.
+static func crater(variant := -1) -> ArrayMesh:
+	if variant < 0:
+		variant = randi() % CRATER_VARIANTS
+	var key := "crater_%d" % variant
+	if _cache.has(key):
+		return _cache[key]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4700 + variant
+	var r := CRATER_R[variant]
+	var lip := (0.16 + r * 0.07) * _CRATER_LIP[variant]
+	var n := _CRATER_SPOKES[variant]
+	var ex := rng.randf_range(0.76, 1.28)
+	var rim := PackedVector2Array()
+	var outer := PackedVector2Array()
+	var floor_pts := PackedVector2Array()
+	var jig := PackedFloat32Array()
+	for k in n:
+		jig.append(rng.randf_range(0.76, 1.24))
+	for k in n:
+		var a := (k + 0.5) * TAU / n
+		var dir := Vector2(sin(a) * ex, cos(a))
+		rim.append(dir * r * jig[k])
+		outer.append(dir * (r * jig[k] + rng.randf_range(0.5, 0.9)))
+		# Offset jitter index: the floor ring is irregular in its own way, not a copy.
+		floor_pts.append(dir * r * jig[(k + 3) % n] * _CRATER_FLOOR[variant])
+	# Slight per-variant cast on the shared mud family: some holes drier, some wetter.
+	var cast := rng.randf_range(-0.05, 0.05)
+	var earth := CRATER_EARTH.lightened(maxf(cast, 0.0)).darkened(maxf(-cast, 0.0))
+	var wall := CRATER_WALL.darkened(maxf(-cast, 0.0) * 0.5)
+	var charred := CRATER_CHARRED
+	var b := Builder.new()
+	var centre := Vector3(0.0, 0.02, 0.0)
+	for k in n:
+		var j := (k + 1) % n
+		var ok := Vector3(outer[k].x, 0.0, outer[k].y)
+		var oj := Vector3(outer[j].x, 0.0, outer[j].y)
+		var rk := Vector3(rim[k].x, lip, rim[k].y)
+		var rj := Vector3(rim[j].x, lip, rim[j].y)
+		var fk := Vector3(floor_pts[k].x, 0.04, floor_pts[k].y)
+		var fj := Vector3(floor_pts[j].x, 0.04, floor_pts[j].y)
+		# Outer spoil skirt, in subtly varying earth shades.
+		var skirt := earth.darkened(0.06 * (k % 3))
+		var out_dir := (ok + oj) * 0.5 + Vector3.UP
+		b.tri(ok, oj, rj, out_dir, skirt)
+		b.tri(ok, rj, rk, out_dir, skirt)
+		# Inner wall down from the lip, then the charred floor fan.
+		b.tri(rk, rj, fj, Vector3.UP, wall.darkened(0.05 * (k % 2)))
+		b.tri(rk, fj, fk, Vector3.UP, wall)
+		b.tri(fk, fj, centre, Vector3.UP, charred)
+	# Clods of earth thrown onto the rim.
+	for k in rng.randi_range(4, 8):
+		var a := rng.randf() * TAU
+		var d := Vector2(sin(a) * ex, cos(a)) * r * rng.randf_range(0.95, 1.35)
+		b.box(Vector3(rng.randf_range(0.22, 0.5), rng.randf_range(0.12, 0.2), rng.randf_range(0.18, 0.35)),
+				Vector3(d.x, lip * rng.randf_range(0.3, 0.8), d.y),
+				earth.darkened(rng.randf_range(0.0, 0.12)), Vector3(0.0, rng.randf() * TAU, 0.0))
+	var mesh := b.build()
+	_cache[key] = mesh
+	return mesh
+
+
+## The shared vertex-colour material with a grey multiplier baked in, cached per tone
+## bucket: per-instance tone variation for crater MeshInstance3Ds (multimesh craters
+## use instance colors instead).
+static func tone_material(tone: float) -> StandardMaterial3D:
+	var t := snappedf(clampf(tone, 0.6, 1.1), 0.02)
+	var key := "tone_%1.2f" % t
+	if _lit.has(key):
+		return _lit[key]
+	var m := StandardMaterial3D.new()
+	m.vertex_color_use_as_albedo = true
+	m.vertex_color_is_srgb = true
+	m.roughness = 1.0
+	m.albedo_color = Color(t, t, t)
+	_lit[key] = m
+	return m
+
+
 ## Quadcopter, drawn double size so it is visible from the camera.
 ## Recon is a Mavic-ish camera drone; FPV is a racing X-frame with an RPG warhead slung under.
 static func drone(fpv: bool) -> ArrayMesh:
