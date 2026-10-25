@@ -119,12 +119,14 @@ func bullet_crack(pos: Vector3) -> void:
 		_play(S_CRACK, pos, -4.0, 12.0, 0.9, 1.15)
 
 
-## The ~1.7 s incoming rush; Support schedules it so the sample ends as the shell lands.
+## The ~0.9 s incoming rush (trimmed to end just before the source recording's own
+## explosion, so the game's blast is the only boom); Support schedules it so the
+## sample ends as the shell lands.
 func shell_whistle(pos: Vector3) -> void:
 	_play(S_WHISTLE.pick_random(), pos + Vector3.UP * 20.0, -1.0, 40.0, 0.95, 1.08)
 
 
-## A bomber bomb's fall: the same rush, but smaller, higher-pitched (~1.45 s at 1.2x)
+## A bomber bomb's fall: the same rush, but smaller, higher-pitched (~0.75 s at 1.2x)
 ## and local to the drop. The bomber schedules it so the tail meets the impact.
 func bomb_whistle(pos: Vector3) -> void:
 	_play(S_WHISTLE.pick_random(), pos + Vector3.UP * 10.0, -9.0, 22.0, 1.15, 1.3)

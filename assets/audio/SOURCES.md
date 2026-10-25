@@ -18,11 +18,14 @@ https://opengameart.org/content/the-free-firearm-sound-library
 - `shot_gun125.wav` — "Cannon explosion sound 4" by SamsterBirdies, freesound.org/s/621003
 - `rpg_launch.wav` — "M142 HIMARS Rocket Launch 8" by qubodup, freesound.org/s/854476
 - `expl_big.wav` — "Explosive 1 v1" by qubodup, freesound.org/s/182432
+  (the source holds three successive bangs; trimmed to the final one so an impact booms once)
 - `expl_far.wav` — "small explosion in city far away" by Garuda1982, freesound.org/s/613560
 - `arty_out.wav` — "K-55 Artillery" by qubodup, freesound.org/s/184365
 - `distant_battle.wav` — "Distant Cannon Fire (simulated)" by stomachache, freesound.org/s/565794
 - `collapse.wav` — "Crashing Collapse of Wood Building" by craigsmith, freesound.org/s/487142
 - `whistle_1..4.wav` — "Incoming mortar 1-4" by Zagge28, freesound.org/s/241837 241838 241839 241840
+  (trimmed to the incoming rush only — the recordings' own impact explosion is cut so the
+  game's blast sound is the single boom; front-padded to a uniform 0.9 s)
 - `engine_loop.mp3` — "Driving Tank Engine" by qubodup, freesound.org/s/187676
 - `drone_fpv_loop.mp3` — "Tiny Hawk 2 short flight" by Sadiquecat, freesound.org/s/677833
 - `drone_recon_loop.mp3` — "Dji Mavic Mini 2 hover" by Sadiquecat, freesound.org/s/683298

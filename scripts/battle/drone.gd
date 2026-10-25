@@ -302,7 +302,7 @@ func _release() -> void:
 	aim.y = battle.map.height_at(aim)
 	var fall := sqrt(2.0 * maxf(1.0, start.y - aim.y) / BOMB_GRAVITY)
 	var b := battle
-	b.schedule(maxf(0.0, fall - 1.45), func() -> void: b.sfx.bomb_whistle(aim))
+	b.schedule(maxf(0.0, fall - 0.75), func() -> void: b.sfx.bomb_whistle(aim))
 	b.schedule(fall, func() -> void:
 		b.fx.explosion(aim, 1.7)
 		b.blast(aim, BOMB_RADIUS, 0.75, 55.0, BOMB_PEN, true, BOMB_STRUCT, 3.0))

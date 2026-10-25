@@ -100,7 +100,7 @@ func _volley(delay: float, target: Vector3, scatter: float, radius: float, letha
 	var r := sqrt(randf()) * scatter
 	var pos := target + Vector3(cos(a) * r, 0.0, sin(a) * r)
 	pos.y = battle.map.height_at(pos)
-	battle.schedule(maxf(0.0, delay - 1.7), func() -> void: battle.sfx.shell_whistle(pos))
+	battle.schedule(maxf(0.0, delay - 0.9), func() -> void: battle.sfx.shell_whistle(pos))
 	battle.schedule(delay, func() -> void: _shell(pos, radius, lethal, supp, pen, struct_power))
 
 
