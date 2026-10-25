@@ -4,6 +4,8 @@ extends Node3D
 ## explosions, dust, fire, missile trails) is made of 3D puffs from the Puffs system.
 
 var puffs: Puffs
+## Audio sibling; explosions and order markers sound from here so every caller is covered.
+var sfx: Sfx
 var _tracer := BoxMesh.new()
 var _ring := TorusMesh.new()
 ## Sustained emitters: {kind, pos, node, until, acc}.
@@ -127,6 +129,8 @@ func gun_blast(pos: Vector3) -> void:
 # --- Explosions, dust, fire ---
 
 func explosion(pos: Vector3, size: float) -> void:
+	if sfx != null:
+		sfx.explosion(pos, size)
 	for i in int(5 + size * 4):
 		puffs.glow.emit(pos + _rand_dir() * size * 0.4, _rand_dir() * size * 3.0 + Vector3.UP * size, randf_range(0.12, 0.3), size * 0.6, size * 2.0, Color(1.0, randf_range(0.6, 0.85), 0.3), 4.0, 2.0)
 	for i in int(5 + size * 5):
@@ -242,6 +246,8 @@ func _emit_fire(e: Dictionary, dt: float) -> void:
 
 
 func order_marker(pos: Vector3, color: Color) -> void:
+	if sfx != null:
+		sfx.ui_tick()
 	var mi := MeshInstance3D.new()
 	mi.mesh = _ring
 	mi.material_override = MeshFactory.unshaded(color, true)

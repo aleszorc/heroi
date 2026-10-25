@@ -27,7 +27,7 @@ Syntax-check a script without launching: `godot --headless --path . --check-only
 
 ## Architecture
 
-Everything is built in code from `scenes/main.tscn` — the only scene file. `scripts/main.gd` assembles the world at runtime: environment/lighting, then `Battle` (from a mission dict), `CameraRig`, `Hud`, `InputController`. There are no other .tscn files, no imported art assets, and no textures: **all models are procedural meshes** generated in `scripts/art/mesh_factory.gd` (soldiers, vehicles, trees, houses, drones), flat-shaded and vertex-coloured.
+Everything is built in code from `scenes/main.tscn` — the only scene file. `scripts/main.gd` assembles the world at runtime: environment/lighting, then `Battle` (from a mission dict), `CameraRig`, `Hud`, `InputController`. There are no other .tscn files, no imported visual assets, and no textures: **all models are procedural meshes** generated in `scripts/art/mesh_factory.gd` (soldiers, vehicles, trees, houses, drones), flat-shaded and vertex-coloured. The one exception is audio: `assets/audio/` holds CC0 recordings (provenance in its `SOURCES.md`), played by `scripts/audio/sfx.gd`.
 
 Key structural facts that span files:
 

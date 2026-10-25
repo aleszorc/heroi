@@ -36,6 +36,7 @@ static func fire(b: Battle, shooter: Unit, from: Vector3, wid: String, target: U
 		impact += Vector3(randf_range(-miss, miss), randf_range(-0.8, 0.3), randf_range(-miss, miss))
 		impact.y = maxf(impact.y, b.map.height_at(impact) + 0.1)
 	b.fx.shot(from, impact, w, wid)
+	b.sfx.shot(from, wid)
 	b.schedule(d / float(w["speed"]), func() -> void: _impact(b, shooter, w, target, impact, hit, from))
 	return true
 
@@ -60,4 +61,5 @@ static func _impact(b: Battle, shooter: Unit, w: Dictionary, target: Unit, pos: 
 		var st: Array = w.get("struct", [0.0, 0.0])
 		b.blast(pos, blast, 0.75, supp * 0.5, 0.0, false, st[0], st[1])
 	else:
+		b.sfx.bullet_crack(pos)
 		b.suppress_area(pos, 5.0, supp * 0.35, target, shooter.side)

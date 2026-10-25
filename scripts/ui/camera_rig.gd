@@ -26,6 +26,10 @@ func _ready() -> void:
 	cam.rotation = Vector3(-PITCH, 0.0, 0.0)
 	add_child(cam)
 	cam.current = true
+	# Hear from the ground point the camera looks at, not from 150 m up the boom.
+	var listener := AudioListener3D.new()
+	add_child(listener)
+	listener.make_current()
 	rotation.y = _yaw
 
 

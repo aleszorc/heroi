@@ -21,6 +21,7 @@ var buildings: Array[Building] = []
 var drones: Array[Drone] = []
 var units_root: Node3D
 var fx: Fx
+var sfx: Sfx
 var view: MapView
 var ai: EnemyAI
 var support: Support
@@ -69,7 +70,11 @@ func setup(m: Dictionary) -> void:
 	add_child(view)
 	view.build(map, m)
 	_build_ground()
+	sfx = Sfx.new()
+	sfx.battle = self
+	add_child(sfx)
 	fx = Fx.new()
+	fx.sfx = sfx
 	add_child(fx)
 	for b: Array in m.get("buildings", []):
 		var house := Building.new()
