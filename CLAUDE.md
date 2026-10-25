@@ -21,7 +21,7 @@ godot --headless --path . --export-debug "Android" build/heroi.apk   # debug APK
 Args after `--` are read via `Game.has_arg()` / `scripts/main.gd`:
 - `autostart` (skip menu and deployment), `fast` (4× speed), `log` (print events)
 - `kind=assault|defend|meeting|treeline seed=123` — pick mission; same seed = same map
-- `shots=/dir` (non-headless) saves screenshots at fixed frames; `demo` runs the scripted showcase in `scripts/dev/demo.gd` (`-- demo shots=/dir`)
+- `shots=/dir` (non-headless) saves screenshots at fixed frames (add `menu` to capture the start menu instead); `demo` runs the scripted showcase in `scripts/dev/demo.gd` (`-- demo shots=/dir`)
 
 Syntax-check a script without launching: `godot --headless --path . --check-only --script <file>`.
 

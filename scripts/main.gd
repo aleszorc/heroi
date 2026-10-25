@@ -63,7 +63,8 @@ func _apply_mission_args() -> void:
 			Game.next_seed = int(a.substr(5))
 			Game.show_menu = false
 		elif a.begins_with("shots=") or a == "autostart" or a == "demo":
-			Game.show_menu = false
+			# `menu` keeps the start menu up so a shots run can capture it.
+			Game.show_menu = Game.has_arg("menu")
 
 
 ## The start menu over a unit-less backdrop: a generated map (fresh one each boot)

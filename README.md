@@ -7,6 +7,12 @@ no textures.
 
 **Dedicated to the Ukrainian heroes — the people defending their country. Слава Україні.**
 
+![Battle](docs/screenshots/battle.png)
+
+| Start menu | Deployment |
+| --- | --- |
+| ![Main menu](docs/screenshots/menu.png) | ![Deployment](docs/screenshots/deployment.png) |
+
 ## Honesty about authorship
 
 Nothing in this repository is mine except the ideas and a passion for strategy games.
