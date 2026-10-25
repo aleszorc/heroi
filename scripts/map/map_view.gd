@@ -8,12 +8,17 @@ const BOARD_DEPTH := 2.0
 ## meshes, so a blast rebuilds at most four small meshes, never the whole ground.
 const CHUNK := 12
 
-## Crater colouring: charred at the scorched centre, disturbed earth at the lip and rim.
-const SCORCHED := Color(0.12, 0.10, 0.09)
-const DISTURBED := Color(0.31, 0.25, 0.18)
+## Crater colouring: charred at the scorched centre, dark wet mud at the lip and rim.
+const SCORCHED := Color(0.085, 0.07, 0.06)
+const DISTURBED := Color(0.20, 0.155, 0.11)
+## Spoil dirt thrown up around trenches: churned mud fading out over ~2 cells.
+const TRENCH_DIRT := Color(0.24, 0.185, 0.125)
 
 var _map: BattleMap
 var _chunks: Array[MeshInstance3D] = []
+## Per-corner spoil-dirt strength around trench cells, built once (trenches never
+## change at runtime). Indexed like crater_depth: y * (W + 1) + x.
+var _trench_dirt := PackedFloat32Array()
 ## Bush multimesh and world positions, so bushes can be re-seated when the ground
 ## under them is dug out by a blast.
 var _bush_mm: MultiMesh
@@ -22,6 +27,7 @@ var _bush_xf: Array = []
 
 func build(map: BattleMap, mission: Dictionary) -> void:
 	_map = map
+	_build_trench_dirt(map)
 	_build_ground(map)
 	_build_board()
 	_build_trees(map)
@@ -59,11 +65,11 @@ func _ground_color(t: int, x: int, y: int) -> Color:
 		BattleMap.T.BUILDING:
 			return Color(0.33, 0.31, 0.28)
 		BattleMap.T.TRENCH:
-			return Color(0.30, 0.25, 0.19)
+			return Color(0.21, 0.16, 0.11)
 		BattleMap.T.GULLY:
 			return Color(0.34, 0.36, 0.23)
 		BattleMap.T.CRATER:
-			return Color(0.25, 0.21, 0.17)
+			return Color(0.19, 0.15, 0.11)
 		BattleMap.T.RUBBLE:
 			return Color(0.40, 0.37, 0.33)
 		BattleMap.T.WRECK:
@@ -127,8 +133,8 @@ func _chunk_mesh(cx: int, cy: int) -> ArrayMesh:
 
 
 ## Cut-earth revetment colouring for the trench walls, darkening towards the floor.
-const REVET_TOP := Color(0.34, 0.27, 0.19)
-const REVET_BOTTOM := Color(0.17, 0.13, 0.09)
+const REVET_TOP := Color(0.25, 0.19, 0.13)
+const REVET_BOTTOM := Color(0.11, 0.085, 0.06)
 
 
 ## One trench cell: a flat floor quad at -TRENCH_DEPTH, and a near-vertical wall
@@ -195,13 +201,41 @@ func _cell_shade(x: int, y: int) -> float:
 	return 0.93 + 0.13 * fmod(absf(sin(float(x) * 12.9898 + float(y) * 78.233) * 43758.5453), 1.0)
 
 
+## Spoil dirt around trenches: each trench cell splats dirt onto the ground corners
+## around it — full strength on the lip, fading over two cells, jittered per corner
+## so the churned band has a ragged, muddy edge instead of a neat rectangle.
+func _build_trench_dirt(map: BattleMap) -> void:
+	var cw := BattleMap.W + 1
+	_trench_dirt.resize(cw * (BattleMap.H + 1))
+	for y in BattleMap.H:
+		for x in BattleMap.W:
+			if map.cells[y * BattleMap.W + x] != BattleMap.T.TRENCH:
+				continue
+			for dy in range(-2, 4):
+				for dx in range(-2, 4):
+					var gx := x + dx
+					var gy := y + dy
+					if gx < 0 or gy < 0 or gx > BattleMap.W or gy > BattleMap.H:
+						continue
+					# Chebyshev distance from the cell's own corner rectangle.
+					var d := maxi(maxi(-dx, dx - 1), maxi(-dy, dy - 1))
+					var s := [1.0, 0.55, 0.22][mini(d, 2)] as float
+					var j := 0.65 + 0.5 * fmod(absf(sin(float(gx) * 127.1 + float(gy) * 311.7) * 43758.5453), 1.0)
+					var i := gy * cw + gx
+					_trench_dirt[i] = maxf(_trench_dirt[i], minf(s * j, 1.0))
+
+
 ## Base cell colour blended toward crater colouring by how deep this corner was dug:
 ## disturbed earth first, grading to scorched char at the deep centre. A rim corner
 ## picks up a lighter disturbed-earth cast from the thrown-up spoil.
 func _vert_color(base: Color, x: int, y: int) -> Color:
 	var i := y * (BattleMap.W + 1) + x
-	var dig: float = _map.crater_depth[i]
 	var col := base
+	if i < _trench_dirt.size():
+		var dirt := _trench_dirt[i]
+		if dirt > 0.0:
+			col = col.lerp(TRENCH_DIRT, dirt * 0.85)
+	var dig: float = _map.crater_depth[i]
 	if dig > 0.0:
 		var t := clampf(dig / 0.55, 0.0, 1.0)
 		col = col.lerp(DISTURBED, minf(t * 2.0, 1.0))
