@@ -14,7 +14,7 @@ Mobile real-time tactics with pause, in an isometric 3D view. You command a rein
 4. **Readable at a glance on a phone.** Team discs, clear state colours, chunky low-poly silhouettes, an always-visible roster.
 
 ### Tone and sensitivity
-- The war is real and ongoing. The game is sober, not gleeful: no gore, no kill-cams, no score popups for kills. Bodies stay on the field.
+- The war is real and ongoing. The game is sober, not gleeful: no kill-cams, no score popups for kills. Hits draw blood — an impact mist, pools spreading under the fallen and the bleeding, smears where casualties are dragged — shown matter-of-factly as a cost, never celebrated. Bodies stay on the field.
 - Places, units and people are **fictional**. Equipment is real and depicted accurately and generically. The game does not recreate named real battles or real brigades.
 - The player commands Ukrainian forces. The opponent is presented as an army, not as caricatures. The game never uses "Z" or "V" symbolism on enemy assets.
 - Monetisation stays clean (premium or premium plus campaign DLC). No loot boxes or pay-to-win. Consider donating a share of revenue to humanitarian demining or medical charities and say so in the store listing.
@@ -114,7 +114,8 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 ### 3.6b Soldier bodies, stances and cover
 - **Rig and look:** every soldier is a skinned 19-bone low-poly rig, posed procedurally each frame. The figure follows the clean low-poly reference style: few large volumes with strong color blocking (shirt / trousers / charcoal gear / skin) rather than greebles. Gear is limited to what reads at game zoom: plate carrier with one pouch row, chest radio with antenna, thigh holster and pouch, integrated dark knee pads, headset helmet with NVG mount and side rails. Ukrainians wear rolled sleeves (bare forearms) and a yellow armband; Russians full sleeves and red. Joint-filling balls match their surrounding color exactly, so they are invisible until a limb bends and they close the gap.
 - **Gait (foot-planted IK):** each foot is a world-space point nailed to the ground through its stance half of the stride and stepped to a predicted landing in its swing half; two-bone IK bends the knee to reach it. Feet cannot slide and knees bend exactly as much as the step demands — walking, running and crouch-walking all come from the same system, with the body sinking as each foot passes under it and weight shifting over the stance foot. Standing men whose feet were left behind or twisted by a turn take one small step home, one foot at a time, so turning in place reads as a shuffle. Prone, crawling and kneeling remain scripted poses.
-- **Stances:** kneeling, prone, ducked behind cover, rising to fire, cowering, and falling when hit. Blasts throw bodies in a short ballistic arc.
+- **Stances:** kneeling, prone, ducked behind cover, rising to fire, cowering, and falling when hit.
+- **Hit physics:** a killed man is knocked along the incoming shot's direction and falls with his own randomized rest pose, fall speed and yaw twist, so no two bodies settle alike. Blasts throw bodies in a ballistic arc with a limp tumble that blends out as they land. Bodies stay where they fall.
 - **Movement physics:**
   - A squad's leader point follows the path and slows when men lag more than 4.5 m behind.
   - Each man steers to his formation slot with limited acceleration and eases into a stop.
@@ -148,25 +149,30 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
   - Going prone drops to the knees first.
 - **Squad movement:**
   - Grid paths are string-pulled into straight runs.
-  - Men follow the leader's breadcrumb trail in a wedge (open ground) or staggered column (running, sneaking, leaving cover), and fall in instead of walking backwards.
+  - Men follow the leader's breadcrumb trail and fall in instead of walking backwards. The squad picks a **situational formation** from context and re-checks it twice a second while moving: **wedge** in the open, **staggered column** when running, sneaking, or in trees, trenches and buildings, **line** when assaulting a known enemy ahead (within 90 m, roughly on the axis of advance), **dispersed** (double spacing) when suppressed or under shelling, and a tight **stack** file on the last 14 m into a building entrance.
+  - **Leader hand signals:** the lead man plays short procedural signals, blended onto the right arm so they read at game zoom — he points the direction on a move order and on each bound, raises a fist (halt) on reaching the destination, and circles an arm overhead (rally) when the squad recovers from being pinned or panicked.
   - Each man has his own reaction delay (0.1–0.9 s) and pace (±7%).
   - Men in formation are fed the squad's velocity and only gently correct towards their place, so the file flows instead of surging and stopping. Spacing pushes are smoothed, and the leader slows gradually as men lag.
   - No team discs under units: sides read from arm tape, silhouettes and labels.
   - In contact on a normal Move, two fire teams bound 12 m in turn while the other covers from cover at full accuracy.
 
 ### 3.6b-3 Individual soldier behaviour (Defilade-style)
+- **State machine:** every soldier runs an explicit behaviour state machine (`soldier.gd`, enum `ST`): IDLE, MOVING, FIRING, RELOADING, THROWING, DIVING (grenade), HIT_REACT (diving from effective fire), COWERING, RESCUING, HIT_FALLING, DEAD, WOUNDED, BEING_DRAGGED, STABILIZED and GETTING_UP, with a `walking_wounded` modifier on the upright states. The transition table is documented in the class header; the squad reads the state instead of ad-hoc flags.
 - **Wounded:**
   - Half of bullet hits and a third of blast hits wound instead of kill.
   - The wounded lie on their backs, writhing, and bleed out after 120 s unless treated.
-  - A wounded man can be finished off by a later blast.
-- **Rescue:**
+  - A wounded man down on the ground can be finished off by a later blast.
+- **Rescue and walking wounded:**
   - Each squad sends one free man (own casualties first, then any friendly within 65 m).
   - He crouch-runs to the casualty, slings his rifle, grabs the vest and drags the man backwards into the nearest cover away from the threat.
   - He then kneels and gives first aid for 8 s, after which the casualty is stabilized.
+  - A stabilized man rests 10 s, then gets back up as **walking wounded**: he rejoins the fight limping, at 55% accuracy and 60% speed (`Defs.WOUNDED_FIGHT`), throws no grenades and is never sent on rescues. Going down again does not double-count his loss.
   - A new move order cancels the job.
-  - The debrief reports killed, wounded and treated.
+  - The debrief reports killed, wounded and treated; the treated are the ones back on their feet.
+- **Reacting to fire:** when effective fire lands on a squad (a suppression jolt ≥ 9 after cover), every free man dives within 0.1–0.3 s (his own delay) to the nearest micro-cover inside ~2.5 m — or simply flat, facing the threat — and stays low for ~4 s; men already flat or standing in trenches, buildings or behind walls just duck. The squad then adapts through the normal suppression logic: return fire, crawl, or bound (`Defs.REACT`).
 - **Cover-to-cover rushes:** in contact on a normal Move, each man of the moving fire team picks his own cover spot a bound (12 m) ahead and sprints there crouched. The covering team holds the cover it last rushed to. The next bound starts only when every rusher is down.
 - **Tactical walk:** with the enemy known within 220 m, walking men drop to a crouched walk.
+- **Blood:** hits burst a brief dark mist and droplets at the impact and splash the ground along the shot; pools grow under killed and bleeding men (until treated, moved or back up); dragged casualties leave smears. All of it is vertex-coloured ground quads in two MultiMeshes (ring buffers of 384 splats and 96 pools), textureless and shadowless — phone-cheap.
 - **Grenades:**
   - Riflemen carry two and lob one at enemy infantry 8–30 m away (35% chance per firing decision, one per squad every 8 s), with a wind-up and throw animation.
   - The grenade arcs, rolls and goes off after 3.6 s (6 m radius; also chips walls).

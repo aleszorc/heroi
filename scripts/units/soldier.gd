@@ -10,10 +10,41 @@ extends Node3D
 ##
 ## His squad sets `want_crouch` / `want_prone` from the cover around him; the body blends
 ## between running, walking, crouch-walking, crawling, kneeling, lying prone, ducking behind
-## cover and rising to fire. Death plays a fall, and blasts throw the body.
+## cover and rising to fire. Death plays a physics-flavoured fall, and blasts throw the body.
+##
+## BEHAVIOUR STATE MACHINE (`st`, enum ST). Events (die, expire, recover, task and action
+## starts) change the underlying facts; `_update_state()` derives the one authoritative
+## state from them every animation tick, so it can never desynchronize. Transitions:
+##
+##   IDLE        -> MOVING          squad feeds him a goal and he picks up speed
+##               -> FIRING          target in the engage window (engage_until / just shot)
+##               -> RELOADING/THROWING  magazine dry / grenade decision
+##               -> DIVING          saw a grenade land (dive())
+##               -> HIT_REACT       effective fire arrived (hit_the_dirt())
+##               -> COWERING        squad panicked in cover
+##               -> RESCUING        assigned a casualty (task "go"/"drag"/"aid")
+##               -> HIT_FALLING     struck (die())
+##   MOVING      -> IDLE/FIRING/DIVING/HIT_REACT/RESCUING/HIT_FALLING  as above
+##   FIRING      -> RELOADING/IDLE/MOVING/HIT_FALLING
+##   RELOADING/THROWING/DIVING/HIT_REACT -> back to IDLE/MOVING when the action ends
+##   RESCUING    -> IDLE            job done or cancelled (_cancel_task)
+##   HIT_FALLING -> DEAD            killed and the body has settled      (terminal)
+##               -> WOUNDED         the hit wounded instead of killing
+##   WOUNDED     -> BEING_DRAGGED   a comrade grabbed his vest (carried_by set)
+##               -> HIT_FALLING     bled out or finished off (expire(): killed)
+##   BEING_DRAGGED -> WOUNDED       dropped in cover (carried_by cleared)
+##   WOUNDED     -> STABILIZED      first aid finished (stabilized set)
+##   STABILIZED  -> GETTING_UP      recover() after Defs.WOUNDED_FIGHT recover_time
+##               -> HIT_FALLING     hit again while down
+##   GETTING_UP  -> IDLE            on his feet as walking wounded (walking_wounded flag
+##                                  then modifies IDLE/MOVING/FIRING: slower, less accurate)
 
 enum B { ROOT, HIPS, SPINE, CHEST, HEAD, UARM_L, FARM_L, HAND_L, UARM_R, FARM_R, HAND_R,
 		THIGH_L, SHIN_L, FOOT_L, THIGH_R, SHIN_R, FOOT_R, WEAPON, BASE }
+
+## Behaviour states; see the transition table above.
+enum ST { IDLE, MOVING, FIRING, RELOADING, THROWING, DIVING, HIT_REACT, COWERING,
+		RESCUING, HIT_FALLING, DEAD, WOUNDED, BEING_DRAGGED, STABILIZED, GETTING_UP }
 
 const BONE_COUNT := 19
 const RUN_SPEED := 4.0
@@ -40,8 +71,6 @@ const W_CARRY_LOW := [Vector3(0.1, -0.16, -0.24), Vector3(-0.7, 0.2, 0.05)]
 const W_RPG_SHOULDER := [Vector3(0.14, 0.32, 0.05), Vector3(0.35, 0.0, 0.0)]
 ## Magazine: [volleys before a reload, reload seconds].
 const MAGS := {"ak": [10, 2.6], "pkm": [10, 6.0], "sniper": [10, 3.0], "rpg": [1, 4.0], "stugna": [1, 6.0]}
-## Bleeding out takes this long unless a comrade gives first aid.
-const BLEED_TIME := 120.0
 ## Distance from a dragged man's body origin to the rescuer's feet.
 const DRAG_DISTANCE := 1.7
 ## Gait: the fraction of the stride cycle each foot spends in the air, and when.
@@ -54,6 +83,8 @@ const FOOT_LATERAL := 0.15
 static var _offsets: Array[Vector3] = []
 
 var weapon := ""
+## Authoritative behaviour state; derived in _update_state(), read by the squad.
+var st := ST.IDLE
 var alive := true
 var killed := false
 var cooldown := 0.0
@@ -90,12 +121,21 @@ var bleed := 0.0
 var stabilized := false
 var rescuer: Soldier = null
 var carried_by: Soldier = null
+## Back on his feet after treatment: fights on at reduced accuracy and speed
+## (Defs.WOUNDED_FIGHT). `wounded` stays true so the debrief still counts him.
+var walking_wounded := false
+## Seconds lain stabilized; at Defs.WOUNDED_FIGHT recover_time he gets up.
+var recover_t := 0.0
+## After reacting to effective fire he keeps flat until this sim time.
+var stay_low_until := -99.0
+## Where the last drag smear was left (Vector3.INF = none yet).
+var last_smear := Vector3.INF
 ## Rescue job: "" (none), "go" (run to the casualty), "drag" (pull him to cover), "aid".
 var task := ""
 var patient: Soldier = null
 var drag_to := Vector3.INF
 var task_timer := 0.0
-## Short animated actions: "" (none), "throw", "reload", "dive".
+## Short animated actions: "" (none), "throw", "reload", "dive", "react", "getup".
 var action := ""
 var action_t := 0.0
 var action_len := 0.0
@@ -109,6 +149,12 @@ var face_point := Vector3.INF
 var hand_targets: Array[Vector3] = []
 ## Rifle slung on his back to free both hands.
 var slung := false
+## Leader hand signal: "" (none), "point" (arm thrust at gesture_point), "halt"
+## (raised fist), "rally" (arm circled overhead). Blended onto the right arm.
+var gesture := ""
+var gesture_t := 0.0
+var gesture_len := 0.0
+var gesture_point := Vector3.INF
 ## Effects hook for footstep dust; set by the squad.
 var fx: Fx = null
 ## Weapon handling. The squad sets `alert` when enemies are known nearby; each man has
@@ -142,6 +188,18 @@ var _toss := Vector3.ZERO
 var _toss_y := 0.0
 var _toss_vy := 0.0
 var _settled := false
+## Death variety: each man gets his own randomized rest pose, fall speed, a yaw spin
+## while falling, and (for blast throws) a limp tumble that blends out on landing.
+var _dead_pose: Array[Quaternion] = []
+var _fall_rate := 1.8
+var _spin := 0.0
+var _tumble_axis := Vector3.RIGHT
+var _tumble_rate := 0.0
+var _tumble_phase := 0.0
+## Getting up as walking wounded: blend from the captured lying pose to the live pose.
+var _recover_q: Array[Quaternion] = []
+var _recover_root := Vector3.ZERO
+var _recover_blend := 1.0
 var _seed := randf() * TAU
 var _clock := 0.0
 var _turn_rate := 0.0
@@ -239,6 +297,7 @@ func can_fire() -> bool:
 
 
 ## Top speed allowed by his current stance; getting up from prone takes a moment.
+## Walking wounded hobble at a fraction of it (Defs.WOUNDED_FIGHT).
 func speed_cap() -> float:
 	var cap := RUN_SPEED * 1.15
 	if want_crouch > 0.5:
@@ -246,6 +305,8 @@ func speed_cap() -> float:
 	cap = lerpf(cap, CRAWL_SPEED * 1.3, prone)
 	if want_prone < 0.5 and prone > 0.05:
 		cap *= 1.0 - prone
+	if walking_wounded:
+		cap *= float(Defs.WOUNDED_FIGHT["speed"])
 	return cap
 
 
@@ -297,6 +358,113 @@ func dive(away: Vector3) -> void:
 	want_prone = 1.0
 
 
+## Snap reaction to effective fire (ST.HIT_REACT): lunges to the nearest micro-cover
+## (or simply away from the threat) and drops flat, facing the threat to return fire.
+## Men already flat, busy, or standing in hard cover (trench, building, wall) skip it.
+func hit_the_dirt(threat_pos: Vector3, map: BattleMap, sim_time: float) -> void:
+	if not alive or busy() or prone > 0.6:
+		return
+	var t := map.type_at(position)
+	if t == BattleMap.T.TRENCH or t == BattleMap.T.BUILDING or map.shield_at(position, threat_pos) >= 0.45:
+		return
+	var spot := map.best_cover_near(position, 1, {}, threat_pos)
+	var to := Vector3(spot.x - position.x, 0.0, spot.z - position.z)
+	var dir: Vector3
+	if to.length() > 0.4 and to.length() < 2.6:
+		dir = to.normalized()
+	else:
+		dir = Vector3(position.x - threat_pos.x, 0.0, position.z - threat_pos.z).normalized() \
+				if _flat_len(position, threat_pos) > 0.5 else Vector3(randf_range(-1, 1), 0.0, randf_range(-1, 1)).normalized()
+	_start_action("react", 0.55)
+	vel = dir * 3.5
+	want_prone = 1.0
+	aim_yaw = atan2(-(threat_pos.x - position.x), -(threat_pos.z - position.z))
+	facing = aim_yaw
+	rotation.y = facing
+	stay_low_until = sim_time + float(Defs.REACT["stay_low"])
+
+
+static func _flat_len(a: Vector3, b: Vector3) -> float:
+	return Vector2(a.x - b.x, a.z - b.z).length()
+
+
+## Plays a brief leader hand signal, blended onto the right arm (see `gesture`).
+func signal_gesture(kind: String, point: Vector3, length := 1.3) -> void:
+	if not alive or cowering or prone > 0.3 or task != "":
+		return
+	gesture = kind
+	gesture_t = 0.0
+	gesture_len = length
+	gesture_point = point
+
+
+## A stabilized casualty gets back up and rejoins the fight as walking wounded
+## (ST.GETTING_UP -> IDLE with the walking_wounded flag).
+func recover() -> void:
+	if alive or not wounded or not stabilized or killed:
+		return
+	alive = true
+	walking_wounded = true
+	carried_by = null
+	rescuer = null
+	recover_t = 0.0
+	_settled = false
+	# Blend from however he lies now to the live pose over the get-up action.
+	_recover_q = _q.duplicate()
+	_recover_root = _root_pos
+	_recover_blend = 0.0
+	prone = 1.0
+	want_prone = 0.0
+	want_crouch = 0.5
+	cover_pos = position
+	vel = Vector3.ZERO
+	reset_gait()
+	_start_action("getup", 1.4)
+
+
+## Derives `st` from the authoritative facts. Called every animation tick; the
+## transition table lives in the class header.
+func _update_state(sim_time: float) -> void:
+	if not alive:
+		if killed:
+			st = ST.DEAD if _settled else ST.HIT_FALLING
+		elif _dead_t < 1.0:
+			st = ST.HIT_FALLING
+		elif carried_by != null:
+			st = ST.BEING_DRAGGED
+		elif stabilized:
+			st = ST.STABILIZED
+		else:
+			st = ST.WOUNDED
+		return
+	match action:
+		"reload":
+			st = ST.RELOADING
+			return
+		"throw":
+			st = ST.THROWING
+			return
+		"dive":
+			st = ST.DIVING
+			return
+		"react":
+			st = ST.HIT_REACT
+			return
+		"getup":
+			st = ST.GETTING_UP
+			return
+	if cowering:
+		st = ST.COWERING
+	elif task != "":
+		st = ST.RESCUING
+	elif sim_time < engage_until or sim_time - last_shot < 1.5:
+		st = ST.FIRING
+	elif Vector2(vel.x, vel.z).length() > 0.4:
+		st = ST.MOVING
+	else:
+		st = ST.IDLE
+
+
 ## Right hand in world space (where a grenade leaves from).
 func hand_point() -> Vector3:
 	return global_transform * _hand_r_sk
@@ -320,12 +488,16 @@ func _tick_action(dt: float) -> void:
 func steer(dt: float, goal: Vector3, max_speed: float, push: Vector3, map: BattleMap, feed := Vector3.ZERO) -> void:
 	if dt <= 0.0:
 		return
-	if action == "dive":
+	if action == "dive" or action == "react":
 		# Thrown flat: momentum only, sliding to a stop.
 		vel *= exp(-2.5 * dt)
 		var dp := position + vel * dt
 		if map.is_passable(dp, false):
 			position = Vector3(dp.x, map.height_at(dp), dp.z)
+		return
+	if action == "getup":
+		# Rising to his feet: rooted until he is up.
+		vel = Vector3.ZERO
 		return
 	var to := Vector3(goal.x - position.x, 0.0, goal.z - position.z)
 	var d := to.length()
@@ -376,19 +548,27 @@ func steer(dt: float, goal: Vector3, max_speed: float, push: Vector3, map: Battl
 	rotation.y = facing
 
 
-## Struck down: killed, or wounded and left bleeding. knock and up_speed throw the body.
+## Struck down: killed, or wounded and left bleeding (ST.HIT_FALLING). `knock` is the
+## impulse from the incoming shot or blast and `up_speed` throws the body ballistically;
+## each fall gets its own randomized rest pose, fall speed, yaw spin and (airborne) tumble.
 func die(knock: Vector3, up_speed: float, is_wounded := false) -> void:
 	if not alive:
 		return
 	alive = false
 	wounded = is_wounded
 	killed = not is_wounded
-	bleed = BLEED_TIME
+	stabilized = false
+	walking_wounded = false
+	recover_t = 0.0
+	last_smear = Vector3.INF
+	bleed = float(Defs.WOUNDED_FIGHT["bleed_time"])
 	action = ""
 	task = ""
+	gesture = ""
 	face_point = Vector3.INF
 	hand_targets.clear()
 	slung = false
+	_recover_blend = 1.0
 	_death_q = _q.duplicate()
 	_death_root = _root_pos
 	_death_w = _w_pos
@@ -397,12 +577,55 @@ func die(knock: Vector3, up_speed: float, is_wounded := false) -> void:
 	_splay = randf_range(-0.3, 0.3)
 	_toss = knock
 	_toss_vy = up_speed
+	_dead_t = 0.0
+	_settled = false
 	vel = Vector3.ZERO
+	# Crumples fold fast on the spot; knocked-back falls are slower and travel.
+	_fall_rate = randf_range(1.4, 2.6)
+	_spin = randf_range(-1.6, 1.6) * (0.4 if is_wounded else 1.0)
+	if up_speed > 1.0:
+		# Blast throw: limp tumble around a random horizontal axis while airborne.
+		var a := randf() * TAU
+		_tumble_axis = Vector3(cos(a), 0.0, sin(a))
+		_tumble_rate = randf_range(4.0, 10.0) * (-1.0 if randf() < 0.5 else 1.0)
+		_spin = randf_range(-4.0, 4.0)
+	else:
+		_tumble_rate = 0.0
+	_tumble_phase = 0.0
+	_make_dead_pose()
 	if knock.length() > 0.5:
 		facing = atan2(-knock.x, -knock.z) + (0.0 if _face_down else PI)
 		rotation.y = facing
 	if not is_wounded:
 		_mesh.mesh = MeshFactory.soldier(_side, weapon, true, _variant)
+
+
+## Builds this man's own rest pose: the base sprawl with every limb angle jittered,
+## so no two bodies settle alike.
+func _make_dead_pose() -> void:
+	var dir := 1.0 if _face_down else -1.0
+	var p: Array[Quaternion] = []
+	p.resize(BONE_COUNT)
+	p.fill(Quaternion.IDENTITY)
+	var j := func(v: float) -> float: return v * randf_range(0.55, 1.5)
+	p[B.ROOT] = _qe(-PI * 0.5 * dir, 0.0, _splay * 0.3)
+	p[B.SPINE] = _qe(j.call(0.05), 0.0, _splay * 0.2)
+	p[B.CHEST] = _qe(j.call(0.05), 0.0, _splay * 0.2)
+	# Limbs splay sideways in the ground plane so they lie flat whichever way he fell.
+	p[B.HEAD] = _qe(0.15 * dir, 0.0, j.call(0.5) + _splay)
+	p[B.THIGH_L] = _qe(randf_range(-0.1, 0.35), 0.0, j.call(-0.3) + _splay * 0.3)
+	p[B.SHIN_L] = _qe(randf_range(-0.5, 0.0), 0.0, j.call(0.15))
+	p[B.THIGH_R] = _qe(randf_range(-0.1, 0.35), 0.0, j.call(0.25))
+	p[B.SHIN_R] = _qe(randf_range(-0.5, 0.0), 0.0, j.call(-0.1))
+	p[B.FOOT_L] = _qe(-0.8 * dir, 0.0, 0.0)
+	p[B.FOOT_R] = _qe(-0.8 * dir, 0.0, 0.0)
+	p[B.UARM_L] = _qe(randf_range(-0.3, 1.2), 0.0, j.call(-1.3) - _splay)
+	p[B.FARM_L] = _qe(randf_range(0.0, 0.6), 0.0, j.call(-0.5))
+	p[B.UARM_R] = _qe(randf_range(-0.3, 1.2), 0.0, j.call(0.9))
+	p[B.FARM_R] = _qe(randf_range(0.0, 0.6), 0.0, j.call(0.6))
+	var wd := _pose_t(W_DEAD)
+	p[B.WEAPON] = Quaternion(wd.basis.orthonormalized())
+	_dead_pose = p
 
 
 ## A wounded man dies: bled out, or hit again.
@@ -420,6 +643,7 @@ func expire() -> void:
 
 ## Advances and applies the pose. dt is simulation time, so pausing freezes him.
 func animate(dt: float, sim_time: float, map: BattleMap) -> void:
+	_update_state(sim_time)
 	# Contact shadow rides the ground under him, wider when he is down.
 	var flat := prone if alive else 1.0
 	_blob.global_position = Vector3(position.x, map.height_at(position) + 0.03, position.z)
@@ -428,13 +652,19 @@ func animate(dt: float, sim_time: float, map: BattleMap) -> void:
 		_animate_dead(dt, map)
 		return
 	_tick_action(dt)
-	var drop := 4.0 if action == "dive" else 1.6
+	if gesture != "":
+		gesture_t += dt
+		if gesture_t >= gesture_len or prone > 0.3 or cowering:
+			gesture = ""
+	var drop := 4.0 if action == "dive" or action == "react" else 1.6
 	prone = move_toward(prone, want_prone, (drop if want_prone > prone else 1.1) * dt)
 	crouch = move_toward(crouch, want_crouch, 2.8 * dt)
 	var speed := Vector2(vel.x, vel.z).length()
 	# Step length grows with speed; the cadence then follows the distance actually
-	# covered, so the feet and the ground never disagree.
+	# covered, so the feet and the ground never disagree. Walking wounded limp short.
 	_step_len = clampf(0.5 + speed * 0.27, 0.55, 1.35) * (1.0 - 0.3 * crouch) * (1.0 - 0.5 * prone)
+	if walking_wounded:
+		_step_len *= 0.78
 	if speed > 0.15:
 		_phase = fmod(_phase + speed * dt / (2.0 * _step_len) * TAU, TAU)
 	_recoil = maxf(0.0, _recoil - dt * 7.0)
@@ -452,6 +682,13 @@ func animate(dt: float, sim_time: float, map: BattleMap) -> void:
 	_fidget = maxf(0.0, _fidget - dt / 1.3)
 	_body_pose(speed, dt, map)
 	_hands_on_weapon(speed)
+	if _recover_blend < 1.0:
+		# Getting up: ease from the captured lying pose into the live one.
+		_recover_blend = minf(1.0, _recover_blend + dt / 1.2)
+		var e := _recover_blend * _recover_blend * (3.0 - 2.0 * _recover_blend)
+		for i in BONE_COUNT:
+			_q[i] = _recover_q[i].slerp(_q[i], e)
+		_root_pos = _recover_root.lerp(_root_pos, e)
 	_apply()
 
 
@@ -485,6 +722,11 @@ func _body_pose(speed: float, dt: float, map: BattleMap) -> void:
 		look = 0.0
 	var lean_side := -clampf(_turn_rate * speed * 0.05, -0.28, 0.28) * (1.0 - p)
 	var lean_fwd := -clampf(_accel, -4.0, 4.0) * 0.025 * (1.0 - p)
+	if walking_wounded:
+		# A limp: the body dips and rolls onto the good leg once per stride,
+		# shoulders hunched over the wound.
+		lean_side += maxf(0.0, sw) * 0.12 * moving * (1.0 - p)
+		spine -= 0.1 * (1.0 - p)
 	var cl := sw * moving
 
 	_q[B.ROOT] = _qe(-PI * 0.5 * p + lean_fwd, 0.08 * cl * p, lean_side + sway)
@@ -751,6 +993,35 @@ func _hands_on_weapon(speed: float) -> void:
 			_q[B.UARM_L] = _q[B.UARM_L].slerp(qa, free)
 			_q[B.FARM_L] = _q[B.FARM_L].slerp(qf, free)
 			_q[B.HAND_L] = _q[B.HAND_L].slerp(Quaternion.IDENTITY, free)
+	if gesture != "":
+		_gesture_arm(chest, s)
+
+
+## Leader hand signals: re-solves the right arm towards the gesture pose, blended in
+## and out over 0.25 s so the hand leaves the grip and returns smoothly.
+func _gesture_arm(chest: Transform3D, s: float) -> void:
+	var gb := minf(minf(gesture_t / 0.25, (gesture_len - gesture_t) / 0.25), 1.0)
+	gb = clampf(gb, 0.0, 1.0)
+	if gb <= 0.01:
+		return
+	gb = gb * gb * (3.0 - 2.0 * gb)
+	var target: Vector3
+	match gesture:
+		"point":
+			# Arm thrust straight out at shoulder height towards the point.
+			var dir := gesture_point - global_position
+			dir.y = 0.0
+			dir = dir.normalized() if dir.length() > 0.3 else Vector3(-sin(facing), 0.0, -cos(facing))
+			target = global_transform.affine_inverse() * (global_position + dir * 0.78 + Vector3.UP * 1.5)
+		"halt":
+			# Fist raised straight overhead.
+			target = chest * (Vector3(0.14, 0.52, 0.04) * s)
+		_:
+			# Rally: the arm circles overhead.
+			var a := gesture_t * 6.5
+			target = chest * (Vector3(0.05 + sin(a) * 0.2, 0.52, cos(a) * 0.2 - 0.04) * s)
+	var blended := _hand_r_sk.lerp(target, gb)
+	_solve_limb(B.UARM_R, chest, blended, Vector3(0.9, 0.1, 0.1), chest.basis)
 
 
 ## Two-bone IK for any limb chain (upper, upper+1, upper+2): rotates the upper and lower
@@ -797,8 +1068,8 @@ func _animate_dead(dt: float, map: BattleMap) -> void:
 	if _settled and not wounded:
 		return
 	_clock += dt
-	_dead_t = minf(1.0, _dead_t + dt * 1.8)
-	# Thrown bodies fly a short ballistic arc, then skid to a stop.
+	_dead_t = minf(1.0, _dead_t + dt * _fall_rate)
+	# Thrown bodies fly a short ballistic arc, tumbling limply, then skid to a stop.
 	_toss_vy -= 9.8 * dt
 	_toss_y = maxf(0.0, _toss_y + _toss_vy * dt)
 	if _toss_y <= 0.0 and _toss_vy < 0.0:
@@ -809,26 +1080,18 @@ func _animate_dead(dt: float, map: BattleMap) -> void:
 		if map.is_passable(np, false):
 			position = np
 	position.y = map.height_at(position)
+	# The yaw spin from the hit twists the body while it is still falling or flying.
+	var falling := _dead_t < 1.0 or _toss_y > 0.0
+	if falling and carried_by == null:
+		facing += _spin * dt
+		rotation.y = facing
+	if _tumble_rate != 0.0:
+		_tumble_phase += _tumble_rate * dt
 
 	var dir := 1.0 if _face_down else -1.0
-	var dead: Array[Quaternion] = []
-	dead.resize(BONE_COUNT)
-	dead.fill(Quaternion.IDENTITY)
-	dead[B.ROOT] = _qe(-PI * 0.5 * dir, 0.0, _splay * 0.3)
-	dead[B.SPINE] = _qe(0.05, 0.0, _splay * 0.2)
-	dead[B.CHEST] = _qe(0.05, 0.0, _splay * 0.2)
-	# Limbs splay sideways in the ground plane so they lie flat whichever way he fell.
-	dead[B.HEAD] = _qe(0.15 * dir, 0.0, 0.5 + _splay)
-	dead[B.THIGH_L] = _qe(0.0, 0.0, -0.3 + _splay * 0.3)
-	dead[B.SHIN_L] = _qe(0.0, 0.0, 0.15)
-	dead[B.THIGH_R] = _qe(0.0, 0.0, 0.25)
-	dead[B.SHIN_R] = _qe(0.0, 0.0, -0.1)
-	dead[B.FOOT_L] = _qe(-0.8 * dir, 0.0, 0.0)
-	dead[B.FOOT_R] = _qe(-0.8 * dir, 0.0, 0.0)
-	dead[B.UARM_L] = _qe(0.0, 0.0, -1.3 - _splay)
-	dead[B.FARM_L] = _qe(0.0, 0.0, -0.5)
-	dead[B.UARM_R] = _qe(0.0, 0.0, 0.9)
-	dead[B.FARM_R] = _qe(0.0, 0.0, 0.6)
+	if _dead_pose.is_empty():
+		_make_dead_pose()
+	var dead := _dead_pose.duplicate()
 	if wounded:
 		# Alive and hurting: a knee drawn up, a hand pressed to the wound, head rolling.
 		var w := sin(_clock * 1.3 + _seed)
@@ -843,8 +1106,13 @@ func _animate_dead(dt: float, map: BattleMap) -> void:
 			dead[B.UARM_R] = _qe(2.8, 0.0, 0.25)
 			dead[B.FARM_L] = Quaternion.IDENTITY
 			dead[B.FARM_R] = Quaternion.IDENTITY
+	# The blast tumble rolls the whole body around a horizontal axis while airborne;
+	# its weight fades out through the last half metre so the body settles flat.
+	var tumble_w := clampf(_toss_y * 2.0, 0.0, 1.0)
+	if tumble_w > 0.001:
+		var tq := Quaternion(_tumble_axis, _tumble_phase)
+		dead[B.ROOT] = Quaternion.IDENTITY.slerp(tq, tumble_w) * dead[B.ROOT]
 	var wd := _pose_t(W_DEAD)
-	dead[B.WEAPON] = Quaternion(wd.basis.orthonormalized())
 	var dead_root := Vector3(0.0, 0.2 + _toss_y, 0.9 * dir)
 	var e := 1.0 - pow(1.0 - _dead_t, 2.0)
 	for i in BONE_COUNT:

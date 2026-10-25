@@ -3,6 +3,16 @@ extends Node3D
 ## Visual effects. Tracers are thin glowing boxes; everything gaseous (smoke screens,
 ## explosions, dust, fire, missile trails) is made of 3D puffs from the Puffs system.
 
+## Blood (FULL style, mobile budget): everything is vertex-coloured ground quads in two
+## MultiMeshes — a ring buffer of static splashes and drag smears, and a small set of
+## pools that keep growing under killed and bleeding men until they are stabilized,
+## dragged away, or back on their feet. No textures, no per-decal nodes.
+const BLOOD_SPLATS := 384
+const BLOOD_POOLS := 96
+const POOL_KILLED_R := 0.65
+const POOL_WOUNDED_R := 0.5
+const POOL_GROW := 0.04
+
 var puffs: Puffs
 var _tracer := BoxMesh.new()
 var _ring := TorusMesh.new()
@@ -11,6 +21,12 @@ var _emitters: Array[Dictionary] = []
 ## Flying missiles that leave smoke trails: {node, last}.
 var _missiles: Array[Dictionary] = []
 var _time := 0.0
+var _splat_mm: MultiMesh
+var _splat_i := 0
+var _pool_mm: MultiMesh
+var _pool_i := 0
+## Growing pools: {s: Soldier, idx, pos, r, max}.
+var _pools: Array[Dictionary] = []
 
 
 func _ready() -> void:
@@ -21,6 +37,34 @@ func _ready() -> void:
 	_ring.outer_radius = 1.0
 	_ring.rings = 20
 	_ring.ring_segments = 3
+	_splat_mm = _make_blood_mm(BLOOD_SPLATS)
+	_pool_mm = _make_blood_mm(BLOOD_POOLS)
+
+
+func _make_blood_mm(count: int) -> MultiMesh:
+	var mm := MultiMesh.new()
+	mm.transform_format = MultiMesh.TRANSFORM_3D
+	mm.use_colors = true
+	var quad := PlaneMesh.new()
+	quad.size = Vector2.ONE
+	var mat := StandardMaterial3D.new()
+	mat.shading_mode = BaseMaterial3D.SHADING_MODE_UNSHADED
+	mat.vertex_color_use_as_albedo = true
+	quad.material = mat
+	mm.mesh = quad
+	mm.instance_count = count
+	var hidden := Transform3D(Basis.IDENTITY.scaled(Vector3.ONE * 0.001), Vector3(0.0, -10.0, 0.0))
+	for i in count:
+		mm.set_instance_transform(i, hidden)
+	var mi := MultiMeshInstance3D.new()
+	mi.multimesh = mm
+	mi.cast_shadow = GeometryInstance3D.SHADOW_CASTING_SETTING_OFF
+	add_child(mi)
+	return mm
+
+
+static func _blood_tone() -> Color:
+	return Color(randf_range(0.3, 0.44), randf_range(0.02, 0.05), randf_range(0.02, 0.04))
 
 
 static func _rand_dir() -> Vector3:
@@ -30,6 +74,87 @@ static func _rand_dir() -> Vector3:
 static func _grey(lo: float, hi: float, a := 1.0) -> Color:
 	var v := randf_range(lo, hi)
 	return Color(v, v * 0.98, v * 0.95, a)
+
+
+# --- Blood ---
+
+## A bullet or fragment strikes home: a brief dark mist at the impact, droplets, and a
+## splash or two on the ground along the shot's direction. `at` is the impact point
+## (chest height), `ground_y` the terrain height under the man.
+func blood_hit(at: Vector3, dir: Vector3, ground_y: float) -> void:
+	if dir.length() < 0.1:
+		dir = _rand_dir()
+		dir.y = 0.0
+		dir = dir.normalized()
+	for i in 3:
+		var tone := _blood_tone()
+		tone.a = 0.8
+		puffs.smoke.emit(at + _rand_dir() * 0.1, dir * randf_range(0.8, 2.0) + _rand_dir() * 0.5,
+				randf_range(0.25, 0.45), 0.12, randf_range(0.35, 0.6), tone, 3.0, -1.0)
+	# Droplets that fall fast and vanish.
+	for i in 2:
+		puffs.smoke.emit(at, dir * randf_range(1.0, 2.5) + Vector3.UP * randf_range(0.5, 1.5),
+				randf_range(0.3, 0.5), 0.05, 0.04, _blood_tone(), 0.2, -12.0)
+	var n := 1 + (1 if randf() < 0.5 else 0)
+	for i in n:
+		var p := Vector3(at.x, 0.0, at.z) + dir * randf_range(0.2, 0.9) \
+				+ Vector3(randf_range(-0.25, 0.25), 0.0, randf_range(-0.25, 0.25))
+		p.y = ground_y + randf_range(0.02, 0.04)
+		_add_splat(p, randf() * TAU, randf_range(0.25, 0.5), randf_range(0.25, 0.5))
+
+
+## A growing pool under a man who just went down (killed or bleeding). It grows until
+## he is stabilized, dragged off the spot, back on his feet, or the pool is full size.
+func blood_pool(s: Soldier) -> void:
+	for p in _pools:
+		if p["s"] == s and s.position.distance_to(p["pos"]) < 0.8:
+			return
+	var idx := _pool_i
+	_pool_i = (_pool_i + 1) % BLOOD_POOLS
+	# The slot might still be growing for someone long dead; retire that entry.
+	for i in range(_pools.size() - 1, -1, -1):
+		if int(_pools[i]["idx"]) == idx:
+			_pools.remove_at(i)
+	_pools.append({"s": s, "idx": idx,
+			"pos": Vector3(s.position.x, s.position.y + randf_range(0.015, 0.03), s.position.z),
+			"r": 0.1, "max": POOL_KILLED_R if s.killed else POOL_WOUNDED_R})
+	_pool_mm.set_instance_color(idx, _blood_tone())
+	_write_pool(_pools[_pools.size() - 1])
+
+
+## A smear left on the ground by a dragged casualty: an elongated quad along the drag.
+func blood_smear(pos: Vector3, yaw: float) -> void:
+	_add_splat(Vector3(pos.x, pos.y + randf_range(0.02, 0.04), pos.z), yaw,
+			randf_range(0.3, 0.45), randf_range(0.9, 1.3))
+
+
+func _add_splat(p: Vector3, yaw: float, sx: float, sz: float) -> void:
+	var b := Basis(Vector3.UP, yaw).scaled(Vector3(sx, 1.0, sz))
+	_splat_mm.set_instance_transform(_splat_i, Transform3D(b, p))
+	_splat_mm.set_instance_color(_splat_i, _blood_tone())
+	_splat_i = (_splat_i + 1) % BLOOD_SPLATS
+
+
+func _write_pool(p: Dictionary) -> void:
+	var r := float(p["r"])
+	_pool_mm.set_instance_transform(int(p["idx"]),
+			Transform3D(Basis.IDENTITY.scaled(Vector3(r * 2.0, 1.0, r * 2.0)), p["pos"]))
+
+
+func _update_pools(dt: float) -> void:
+	for i in range(_pools.size() - 1, -1, -1):
+		var p := _pools[i]
+		var s: Soldier = p["s"]
+		# Stop growing (the stain stays) once he is treated, moved, or gone.
+		if not is_instance_valid(s) or s.alive or s.stabilized \
+				or s.position.distance_to(p["pos"]) > 0.8:
+			_pools.remove_at(i)
+			continue
+		var r := minf(float(p["r"]) + POOL_GROW * dt, float(p["max"]))
+		p["r"] = r
+		_write_pool(p)
+		if r >= float(p["max"]):
+			_pools.remove_at(i)
 
 
 # --- Shots ---
@@ -145,6 +270,7 @@ func _process(delta: float) -> void:
 	if dt <= 0.0:
 		return
 	_time += dt
+	_update_pools(dt)
 	for i in range(_emitters.size() - 1, -1, -1):
 		var e := _emitters[i]
 		if _time > float(e["until"]):

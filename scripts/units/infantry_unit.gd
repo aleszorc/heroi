@@ -7,6 +7,12 @@ extends Unit
 ## next cover; riflemen lob grenades at close enemies; and when someone goes down wounded,
 ## the nearest free comrade runs over, drags him into cover and gives first aid.
 
+## Situational formations, picked from context while moving (see _choose_formation):
+## WEDGE in the open, COLUMN through trees/trenches and when running or sneaking,
+## LINE when assaulting a known enemy, DISPERSED under artillery or suppression,
+## STACK on the approach to a building entrance.
+enum Form { WEDGE, COLUMN, LINE, DISPERSED, STACK }
+
 const SMOKE_RANGE := 40.0
 ## How often a halted squad re-checks that its cover still faces the threat.
 const COVER_RECHECK := 5.0
@@ -18,11 +24,14 @@ const TRAIL_MAX := 240
 const WOUND_CHANCE_BULLET := 0.5
 const WOUND_CHANCE_BLAST := 0.35
 const RESCUE_RANGE := 45.0
-const FIRST_AID_TIME := 8.0
 const DRAG_SPEED := 0.9
 const GRENADE_MIN := 8.0
 const GRENADE_MAX := 30.0
 const GRENADE_COOLDOWN := 8.0
+## Distance from a building destination at which the squad stacks into a tight file.
+const STACK_RANGE := 14.0
+## A known enemy closer than this, roughly ahead, makes an advancing squad go on line.
+const ASSAULT_RANGE := 90.0
 
 var members: Array[Soldier] = []
 ## Where danger comes from: the nearest known enemy, or straight ahead.
@@ -42,6 +51,10 @@ var _bound_pause := 0.0
 var _leader_vel := Vector3.ZERO
 var _contact := false
 var _next_grenade := 0.0
+## Current formation (Form). -1 forces a re-slot on the next pick.
+var _formation := -1
+## Earliest sim time the squad may dive for cover again (reaction rate limit).
+var _react_cd := -99.0
 
 
 func _build() -> void:
@@ -160,15 +173,15 @@ static func _flat(a: Vector3, b: Vector3) -> float:
 
 
 ## New move order: face the way, pick a formation, and let the men set off one by one.
+## The leader points the direction before stepping off.
 func _on_path_set(_target: Vector3) -> void:
 	var first := path[0]
 	var dir := Vector3(first.x - position.x, 0.0, first.z - position.z)
 	if dir.length() > 0.5:
 		heading = yaw_to(dir)
 	_trail = PackedVector3Array([position])
-	var t := map.type_at(position)
-	var column := order == Order.FAST or order == Order.SNEAK or t == BattleMap.T.TREES or t == BattleMap.T.TRENCH or t == BattleMap.T.BUILDING
-	_set_formation(column)
+	_formation = -1
+	_apply_formation(_choose_formation())
 	_bounding = false
 	_moving_team = 0
 	_bound_left = BOUND_LENGTH
@@ -176,23 +189,78 @@ func _on_path_set(_target: Vector3) -> void:
 		s.start_at = battle.time + randf_range(0.1, 0.9)
 		s.rush_pos = Vector3.INF
 		_cancel_task(s)
+	var lead := _leader()
+	if lead != null:
+		lead.signal_gesture("point", path[path.size() - 1], 1.3)
+		lead.start_at = battle.time + 0.9
 
 
-## Wedge in the open (point man leading, wings echeloned back); staggered column for
-## running, sneaking, or setting off from trees, trenches and buildings.
-func _set_formation(column: bool) -> void:
+## First able-bodied man: he carries the leader point's hand signals.
+func _leader() -> Soldier:
+	for s in members:
+		if s.alive and s.task == "" and not s.walking_wounded:
+			return s
+	return null
+
+
+## Picks the formation that fits the ground and the situation, in priority order:
+## stack on a building entrance, disperse under fire or shelling, file through close
+## terrain (and when running or sneaking), line up against a known enemy ahead,
+## otherwise wedge. Re-checked every threat tick while moving.
+func _choose_formation() -> int:
+	if not path.is_empty():
+		var dest := path[path.size() - 1]
+		if map.type_at(dest) == BattleMap.T.BUILDING and _flat(position, dest) < STACK_RANGE:
+			return Form.STACK
+	if state >= State.SUPPRESSED or suppression > 35.0:
+		return Form.DISPERSED
+	var t := map.type_at(position)
+	if order == Order.FAST or order == Order.SNEAK or t == BattleMap.T.TREES \
+			or t == BattleMap.T.TRENCH or t == BattleMap.T.BUILDING:
+		return Form.COLUMN
+	if _contact and _flat(threat, position) < ASSAULT_RANGE:
+		var to := Vector3(threat.x - position.x, 0.0, threat.z - position.z).normalized()
+		if to.dot(forward()) > 0.4:
+			return Form.LINE
+	return Form.WEDGE
+
+
+## Assigns slots for formation f (no-op when it is already formed).
+## Slot: x = lateral offset, y = distance back along the leader's trail.
+func _apply_formation(f: int) -> void:
+	if f == _formation:
+		return
+	_formation = f
+	var alive_n := alive_count()
 	var k := 0
 	for s in members:
 		if not s.alive:
 			continue
-		if column:
-			s.slot = Vector2(1.2 if k % 2 == 0 else -1.2, 1.0 + k * 2.8)
-			s.team = k % 2
-		else:
-			var rank := (k + 1) / 2
-			var side := -1.0 if k % 2 == 1 else 1.0
-			s.slot = Vector2(0.0 if k == 0 else side * rank * 2.6, 1.0 + rank * 2.6)
-			s.team = 0 if k == 0 or side < 0.0 else 1
+		match f:
+			Form.COLUMN:
+				# Staggered column: a snaking two-wide file.
+				s.slot = Vector2(1.2 if k % 2 == 0 else -1.2, 1.0 + k * 2.8)
+				s.team = k % 2
+			Form.STACK:
+				# Tight single file on the entry man's heels.
+				s.slot = Vector2(0.0, 0.8 + k * 1.1)
+				s.team = k % 2
+			Form.LINE:
+				# On line abreast, facing the enemy, a slight stagger for depth.
+				s.slot = Vector2((k - (alive_n - 1) * 0.5) * 3.2, 1.0 + (k % 2) * 1.4)
+				s.team = k % 2
+			Form.DISPERSED:
+				# Blown-out wedge: double spacing against shrapnel and bursts.
+				var rank_d := (k + 1) / 2
+				var side_d := -1.0 if k % 2 == 1 else 1.0
+				s.slot = Vector2(0.0 if k == 0 else side_d * rank_d * 4.6, 1.0 + rank_d * 4.2)
+				s.team = 0 if k == 0 or side_d < 0.0 else 1
+			_:
+				# Wedge: point man leading, wings echeloned back.
+				var rank := (k + 1) / 2
+				var side := -1.0 if k % 2 == 1 else 1.0
+				s.slot = Vector2(0.0 if k == 0 else side * rank * 2.6, 1.0 + rank * 2.6)
+				s.team = 0 if k == 0 or side < 0.0 else 1
 		k += 1
 
 
@@ -301,7 +369,10 @@ func _sim_move(dt: float) -> void:
 		_update_threat()
 		_contact = _in_contact()
 		_assign_rescue()
-	_bleed(dt)
+		if not arrived and state != State.PINNED:
+			# The situation changes mid-move: re-check the formation against it.
+			_apply_formation(_choose_formation())
+	_medical(dt)
 	if not arrived and state != State.PINNED:
 		_advance_leader(dt)
 	elif arrived:
@@ -337,6 +408,10 @@ func _advance_leader(dt: float) -> void:
 					_bound_left = BOUND_LENGTH
 					_bound_pause = 1.5
 					_start_holds()
+					# The leader waves the next team forward.
+					var lead := _leader()
+					if lead != null:
+						lead.signal_gesture("point", _point_along_path(BOUND_LENGTH), 1.0)
 		elif _team_rush_lag(_moving_team) > 8.0:
 			spd *= 0.2
 	else:
@@ -431,14 +506,24 @@ func _push_from(s: Soldier, neighbours: Array[Soldier]) -> Vector3:
 
 # --- Wounded and rescue ---
 
-func _bleed(dt: float) -> void:
+## Bleed-out for the untreated; recovery for the stabilized. A treated man rests
+## Defs.WOUNDED_FIGHT recover_time seconds, then gets up as walking wounded.
+func _medical(dt: float) -> void:
 	for s in members:
-		if s.wounded and not s.stabilized:
+		if not s.wounded or s.alive:
+			continue
+		if not s.stabilized:
 			s.bleed -= dt
 			if s.bleed <= 0.0:
 				_release(s)
 				s.expire()
 				battle.on_died_of_wounds(self)
+		elif s.carried_by == null and s.rescuer == null and state != State.DESTROYED:
+			s.recover_t += dt
+			if s.recover_t >= float(Defs.WOUNDED_FIGHT["recover_time"]):
+				s.recover()
+				s.aim_yaw = yaw_to(threat - s.position)
+				battle.notify(self, "%s: walking wounded back on his feet" % display_name, false)
 
 
 ## Sends one free man after the nearest untreated casualty, own squad first.
@@ -465,7 +550,8 @@ func _assign_rescue() -> void:
 	var helper: Soldier = null
 	var helper_d := RESCUE_RANGE
 	for s in members:
-		if s.alive and not s.busy():
+		# Walking wounded are too slow to send after a casualty.
+		if s.alive and not s.busy() and not s.walking_wounded:
 			var d := _flat(s.position, best.position)
 			if d < helper_d:
 				helper_d = d
@@ -540,10 +626,17 @@ func _do_task(s: Soldier, dt: float, neighbours: Array[Soldier]) -> void:
 				var side := Vector3(dir.z, 0.0, -dir.x) * 0.16
 				s.face_point = chest
 				s.hand_targets = [chest + side, chest - side]
+				# The casualty leaves a smear on the ground every stretch of the drag.
+				if w.last_smear == Vector3.INF or _flat(w.position, w.last_smear) > 0.8:
+					w.last_smear = w.position
+					battle.fx.blood_smear(w.position, w.facing)
 			if _flat(s.position, s.drag_to) < 0.7:
 				w.carried_by = null
 				s.task = "aid"
 				s.task_timer = 0.0
+				if not w.stabilized:
+					# Still bleeding where he was dropped.
+					battle.fx.blood_pool(w)
 		"aid":
 			s.slung = true
 			s.want_crouch = 1.0
@@ -556,12 +649,43 @@ func _do_task(s: Soldier, dt: float, neighbours: Array[Soldier]) -> void:
 			s.hand_targets = [chest + Vector3(0.0, 0.0, 0.1), chest - Vector3(0.0, 0.0, 0.1)]
 			if _flat(s.position, spot) < 0.5:
 				s.task_timer += dt
-				if s.task_timer >= FIRST_AID_TIME:
+				if s.task_timer >= float(Defs.WOUNDED_FIGHT["first_aid_time"]):
 					w.stabilized = true
 					w.rescuer = null
 					s.patient = null
 					_cancel_task(s)
 					battle.notify(self, "%s: wounded man stabilized" % display_name, false)
+
+
+# --- Reacting to fire, hand signals ---
+
+## Effective fire just arrived: every free man dives for the nearest micro-cover
+## after his own split-second delay (ST.HIT_REACT), then the squad adapts through
+## the normal suppression logic (return fire, crawl, bound).
+func _on_incoming(amount: float) -> void:
+	if amount < float(Defs.REACT["trigger"]) or battle.time < _react_cd or state >= State.PANICKED:
+		return
+	_react_cd = battle.time + float(Defs.REACT["cooldown"])
+	var from := threat
+	for s in members:
+		if s.alive and not s.busy() and s.prone < 0.6:
+			var sl: Soldier = s
+			battle.schedule(randf_range(float(Defs.REACT["delay_min"]), float(Defs.REACT["delay_max"])),
+					func() -> void: sl.hit_the_dirt(from, map, battle.time))
+
+
+## Reached the destination: the leader raises a fist — halt.
+func _on_arrived() -> void:
+	var lead := _leader()
+	if lead != null:
+		lead.signal_gesture("halt", Vector3.INF, 1.2)
+
+
+## Recovered from pinned or panic: the leader circles an arm — rally on me.
+func _on_recovered() -> void:
+	var lead := _leader()
+	if lead != null:
+		lead.signal_gesture("rally", Vector3.INF, 1.6)
 
 
 func _nearby_soldiers() -> Array[Soldier]:
@@ -588,6 +712,10 @@ func _choose_stance(s: Soldier, stationary: bool) -> void:
 				c = 1.0
 			else:
 				p = 1.0
+	elif battle.time < s.stay_low_until and shield < 0.45 \
+			and t != BattleMap.T.TRENCH and t != BattleMap.T.BUILDING:
+		# Just dove from effective fire: stays flat for a few seconds.
+		p = 1.0
 	elif not stationary:
 		if _bounding and s.rush_pos != Vector3.INF and s.team == _moving_team:
 			c = 0.35
@@ -657,6 +785,8 @@ func _sim_fire(dt: float) -> void:
 		var fired := false
 		# Men of the covering team fire from a halt at full accuracy.
 		var a := acc * (2.0 if not arrived and s.vel.length() < 0.3 else 1.0)
+		if s.walking_wounded:
+			a *= float(Defs.WOUNDED_FIGHT["acc"])
 		if t != null:
 			fired = Combat.fire(battle, self, s.muzzle(), s.weapon, t, a)
 		else:
@@ -671,7 +801,8 @@ func _sim_fire(dt: float) -> void:
 
 ## Riflemen lob a grenade at close enemy infantry, especially men behind cover.
 func _try_grenade(s: Soldier, t: Unit) -> bool:
-	if t == null or t.is_vehicle or s.grenades <= 0 or s.busy() or not arrived or battle.time < _next_grenade:
+	if t == null or t.is_vehicle or s.grenades <= 0 or s.busy() or not arrived \
+			or s.walking_wounded or battle.time < _next_grenade:
 		return false
 	var at := t.aim_point()
 	var d := _flat(s.position, at)
@@ -720,10 +851,17 @@ func _nearest(p: Vector3, max_d: float) -> Soldier:
 	return best
 
 
+## A bullet found a man: he is knocked along the shot's direction as he falls.
 func take_hit(pos: Vector3, shooter: Unit) -> void:
 	var s := _nearest(pos, 3.0)
-	if s != null:
-		casualty(s, shooter, Vector3.ZERO, 0.0, randf() < WOUND_CHANCE_BULLET)
+	if s == null:
+		return
+	var dir := Vector3.ZERO
+	if shooter != null:
+		dir = Vector3(s.position.x - shooter.position.x, 0.0, s.position.z - shooter.position.z)
+		dir = dir.normalized() if dir.length() > 0.5 else Vector3.ZERO
+	battle.fx.blood_hit(s.center(), dir, s.position.y)
+	casualty(s, shooter, dir * randf_range(1.0, 2.2), 0.0, randf() < WOUND_CHANCE_BULLET)
 
 
 func apply_blast(pos: Vector3, radius: float, lethal: float, supp: float, _pen: float, _top: bool) -> void:
@@ -738,9 +876,12 @@ func apply_blast(pos: Vector3, radius: float, lethal: float, supp: float, _pen: 
 			var chance := lethal * (1.0 - d / radius) * (1.0 - map.cover_from(s.position, pos) * 0.65) * (0.6 + 0.4 * s.exposure())
 			if randf() < chance:
 				var force := (1.0 - d / radius) * radius
+				battle.fx.blood_hit(s.center(), away.normalized(), s.position.y)
 				casualty(s, null, away.normalized() * force * 1.6, force * 0.9, randf() < WOUND_CHANCE_BLAST)
 	for s in members:
-		if s.wounded and _flat(s.position, pos) < radius * 0.6 and randf() < lethal * 0.5:
+		# A blast can finish off a man already down (the walking wounded go through
+		# the normal casualty roll above instead).
+		if s.wounded and not s.alive and _flat(s.position, pos) < radius * 0.6 and randf() < lethal * 0.5:
 			_release(s)
 			s.expire()
 			battle.on_died_of_wounds(self)
@@ -754,12 +895,16 @@ func casualty(s: Soldier, shooter: Unit, knock: Vector3, up_speed: float, wounde
 	if s.patient != null:
 		s.patient.rescuer = null
 		s.patient.carried_by = null
+	# A walking wounded going down again was already counted as a loss once.
+	var recounted := s.walking_wounded
 	s.die(knock, up_speed, wounded)
+	battle.fx.blood_pool(s)
 	if shooter != null:
 		shooter.kills += 1
 	morale_hit(10.0)
 	suppression = minf(100.0, suppression + 12.0)
-	battle.on_casualty(self)
+	if not recounted:
+		battle.on_casualty(self)
 	if alive_count() == 0:
 		state = State.DESTROYED
 		battle.on_unit_lost(self)

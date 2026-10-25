@@ -185,6 +185,21 @@ func _can_drive() -> bool:
 	return true
 
 
+## A jolt of incoming suppression (already cover-scaled). Infantry dive on it.
+func _on_incoming(_amount: float) -> void:
+	pass
+
+
+## Reached the end of a move path (not routing). Infantry leaders signal a halt.
+func _on_arrived() -> void:
+	pass
+
+
+## Recovered to Ready after being pinned or panicked. Infantry leaders rally the men.
+func _on_recovered() -> void:
+	pass
+
+
 func cover_here() -> float:
 	return map.cover_at(position)
 
@@ -319,6 +334,7 @@ func _reach_end() -> void:
 	if not is_guarding():
 		order = Order.NONE
 	_take_cover()
+	_on_arrived()
 
 
 # --- Morale ---
@@ -329,6 +345,7 @@ func receive_suppression(amount: float) -> void:
 	var scale := 0.15 if is_vehicle else 1.0 - cover_here() * 0.35
 	suppression = minf(100.0, suppression + amount * scale)
 	since_suppressed = 0.0
+	_on_incoming(amount * scale)
 
 
 func morale_hit(amount: float) -> void:
@@ -366,6 +383,8 @@ func _update_morale(dt: float) -> void:
 		if battle.time - _pinned_msg_at > 25.0:
 			_pinned_msg_at = battle.time
 			battle.notify(self, "%s is pinned down" % display_name, false)
+	elif state == State.OK and prev >= State.PINNED:
+		_on_recovered()
 
 
 func _panic() -> void:

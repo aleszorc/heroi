@@ -7,6 +7,21 @@ const WALK := 2.2
 const RUN := 4.0
 const CRAWL := 1.0
 
+## Reaction to effective fire (§3.6b-3): a suppression jolt of at least `trigger` makes
+## every free soldier dive for the nearest micro-cover after his own `delay` (seconds),
+## then stay low for `stay_low` seconds. `cooldown` limits how often a squad re-reacts.
+const REACT := {"trigger": 9.0, "cooldown": 5.0, "delay_min": 0.1, "delay_max": 0.3, "stay_low": 4.0}
+
+## Wounded and walking wounded (§3.6b-3). A stabilized casualty gets up after
+## `recover_time` seconds and fights on at `acc` accuracy and `speed` speed.
+const WOUNDED_FIGHT := {
+	"bleed_time": 120.0,     # s until an untreated casualty bleeds out
+	"first_aid_time": 8.0,   # s of treatment to stabilize him
+	"recover_time": 10.0,    # s after stabilization before he gets back up
+	"acc": 0.55,             # accuracy multiplier while walking wounded
+	"speed": 0.6,            # speed multiplier while walking wounded
+}
+
 ## range: m. reload: s between volleys. acc: hit chance at point blank in the open.
 ## supp: suppression one volley adds. pen: armour penetration, 0 = cannot hurt armour.
 ## blast: explosive radius in m, 0 = bullet. at_only: never fired at infantry.
