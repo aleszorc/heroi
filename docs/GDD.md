@@ -212,7 +212,7 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 
 ### 3.6d Smoke and atmosphere
 - **Puffs:** smoke, dust and flame are faceted 3D puffs (same style as the tree crowns), lit and shadow-casting. They are simulated with velocity, drag, buoyancy and wind, swell, then dither-dissolve. About 3,100 puffs in two MultiMeshes, written in one buffer per frame.
-- **Smoke grenade:** a dense 2 s burst followed by a canister feed for about 35 s. The line-of-sight block drifts with the visible cloud.
+- **Smoke grenade:** the cloud grows from the canister outward — puffs spawn near-stationary inside a disc that widens to the sight-blocking radius over ~3.5 s and reach full size within ~2 s, so the frontier advances as one thick mass rather than as separate globes; a narrow billowing column keeps feeding it from the canister for about 35 s. The line-of-sight block drifts with the visible cloud.
 - **Other effects:** explosions (flame, black smoke, dust ring, thrown clods), burning wrecks, missile trails, track dust and exhaust, and the muzzle dust ring of a tank gun.
 
 ### 3.6e Vehicle models

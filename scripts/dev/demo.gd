@@ -58,7 +58,12 @@ func _ready() -> void:
 		[340, func() -> void: _shell_farm()],
 		[372, func() -> void: _shot("house_hit")],
 		[400, func() -> void: _shot("debris")],
-		[600, func() -> void: _shot("house_after")],
+		[580, func() -> void:
+			_shot("house_after")
+			# The smoke cloud again, now fully established and drifting with the wind.
+			cam.zoom = 40.0
+			cam.focus_now(Vector3(65, 0, -29))],
+		[600, func() -> void: _shot("smoke_spread")],
 		[610, func() -> void: get_tree().quit()],
 	]
 

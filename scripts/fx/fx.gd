@@ -215,20 +215,34 @@ func _process(delta: float) -> void:
 
 func _emit_smoke(e: Dictionary, dt: float) -> void:
 	var age := _time - float(e["start"])
-	# Dense burst for the first two seconds, then a steady feed.
-	var rate := 34.0 if age < 2.0 else 6.0
+	# Dense burst while the cloud establishes itself, then a steady feed.
+	var rate := 26.0 if age < 3.5 else 6.0
 	e["acc"] = float(e["acc"]) + rate * dt
 	var center: Vector3 = e["pos"]
 	center += Puffs.WIND * age
+	# The cloud frontier advances because fresh smoke appears there already thick, not
+	# because lone puffs fly out and inflate later: spawn inside a disc that grows to
+	# the sight-blocking radius, each puff near-stationary and at full size within ~2 s.
+	var reach := lerpf(0.8, 6.5, minf(age / 3.5, 1.0))
 	while float(e["acc"]) >= 1.0:
 		e["acc"] = float(e["acc"]) - 1.0
 		var a := randf() * TAU
 		var out := Vector3(cos(a), 0.0, sin(a))
-		var v := out * randf_range(1.0, 3.5) + Vector3.UP * randf_range(0.1, 0.5)
-		var p := center + out * randf_range(0.0, 1.5) + Vector3.UP * 0.6
+		var r := sqrt(randf()) * reach
+		var p := center + out * r + Vector3.UP * randf_range(0.3, 1.3)
+		var v := out * randf_range(0.2, 0.8) + Vector3.UP * randf_range(0.1, 0.4)
 		var tone := _grey(0.62, 0.8)
 		tone.b += 0.03
-		puffs.smoke.emit(p, v, randf_range(18.0, 28.0), 0.6, randf_range(2.2, 4.8), tone, 0.35, 0.03)
+		puffs.smoke.emit(p, v, randf_range(18.0, 28.0), 0.9, randf_range(2.6, 4.6), tone,
+				0.9, 0.04, randf_range(1.2, 2.4))
+	# The canister itself keeps billowing: a quick, narrow column at the centre.
+	e["jet"] = float(e.get("jet", 0.0)) + dt
+	while float(e["jet"]) >= 0.12:
+		e["jet"] = float(e["jet"]) - 0.12
+		puffs.smoke.emit(center + Vector3.UP * 0.3,
+				Vector3.UP * randf_range(1.5, 2.5) + _rand_dir() * 0.4,
+				randf_range(3.5, 5.5), 0.35, randf_range(1.6, 2.4), _grey(0.68, 0.84),
+				1.2, 0.15, randf_range(0.8, 1.4))
 
 
 func _emit_fire(e: Dictionary, dt: float) -> void:

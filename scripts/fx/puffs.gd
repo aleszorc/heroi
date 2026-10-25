@@ -25,6 +25,7 @@ class Pool:
 	var lift := PackedFloat32Array()
 	var col := PackedColorArray()
 	var rot := PackedInt32Array()
+	var swell := PackedFloat32Array()
 
 	func _init(capacity: int, mesh: Mesh) -> void:
 		cap = capacity
@@ -45,8 +46,10 @@ class Pool:
 		lift.resize(cap)
 		col.resize(cap)
 		rot.resize(cap)
+		swell.resize(cap)
 
-	func emit(p: Vector3, v: Vector3, lifetime: float, size_from: float, size_to: float, c: Color, drg: float, lft: float) -> void:
+	## `swl` is the time to reach full size; 0 (the default) means grow over the whole life.
+	func emit(p: Vector3, v: Vector3, lifetime: float, size_from: float, size_to: float, c: Color, drg: float, lft: float, swl := 0.0) -> void:
 		if n >= cap:
 			return
 		pos[n] = p
@@ -59,6 +62,7 @@ class Pool:
 		drag[n] = drg
 		lift[n] = lft
 		rot[n] = randi() % Puffs.BASES.size()
+		swell[n] = swl if swl > 0.0 else lifetime
 		n += 1
 
 	func _remove(i: int) -> void:
@@ -73,6 +77,7 @@ class Pool:
 		drag[i] = drag[n]
 		lift[i] = lift[n]
 		rot[i] = rot[n]
+		swell[i] = swell[n]
 
 	func update(dt: float, wind: Vector3) -> void:
 		var i := 0
@@ -93,8 +98,9 @@ class Pool:
 			i += 1
 		for k in n:
 			var t := age[k] / life[k]
-			# Swell quickly, then dissolve and shrink a little at the end.
-			var size := lerpf(s0[k], s1[k], 1.0 - pow(1.0 - t, 2.5))
+			# Swell quickly (over `swell` seconds), then dissolve and shrink a little at the end.
+			var ts := minf(age[k] / swell[k], 1.0)
+			var size := lerpf(s0[k], s1[k], 1.0 - pow(1.0 - ts, 2.5))
 			var fade := smoothstep(0.6, 1.0, t)
 			size *= 1.0 - 0.35 * fade
 			var b: Basis = Puffs.BASES[rot[k]]
