@@ -4,22 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-**Posadka** — mobile isometric real-time tactics (Russo-Ukrainian war), Godot 4.7, GDScript, Mobile renderer. The full design and balance reference is `docs/GDD.md`; its §9 maps every script to its responsibility — keep both in sync when systems change.
+**Posadka** (working title; public brand: **Heroi / ГЕРОЇ**) — mobile isometric real-time tactics (Russo-Ukrainian war), Godot 4.7, GDScript, Mobile renderer. The full design and balance reference is `docs/GDD.md`; its §9 maps every script to its responsibility — keep both in sync when systems change.
 
 ## Commands
 
 There is no test framework or linter. Verification is done by running the game:
 
 ```sh
-godot --path .                      # play on desktop (mouse = touch, wheel zoom, WASD pan, Q/E rotate, Space pause, Esc cancel)
+godot --path .                      # play on desktop (mouse = touch, wheel zoom, WASD pan, Q/E rotate, Esc options/cancel; game boots to the start menu)
 godot -e --path .                   # open the editor
 godot --headless --path . --fixed-fps 30 --quit-after 6000 -- autostart fast log
                                     # headless full-battle test: player passive, prints event log + result (~2.5 s)
-godot --headless --path . --export-debug "Android" build/posadka.apk   # debug APK (arm64, debug keystore)
+godot --headless --path . --export-debug "Android" build/heroi.apk   # debug APK (arm64, debug keystore)
 ```
 
 Args after `--` are read via `Game.has_arg()` / `scripts/main.gd`:
-- `autostart` (skip deployment), `fast` (4× speed), `log` (print events)
+- `autostart` (skip menu and deployment), `fast` (4× speed), `log` (print events)
 - `kind=assault|defend|meeting|treeline seed=123` — pick mission; same seed = same map
 - `shots=/dir` (non-headless) saves screenshots at fixed frames; `demo` runs the scripted showcase in `scripts/dev/demo.gd` (`-- demo shots=/dir`)
 
@@ -27,7 +27,7 @@ Syntax-check a script without launching: `godot --headless --path . --check-only
 
 ## Architecture
 
-Everything is built in code from `scenes/main.tscn` — the only scene file. `scripts/main.gd` assembles the world at runtime: environment/lighting, then `Battle` (from a mission dict), `CameraRig`, `Hud`, `InputController`. There are no other .tscn files, no imported visual assets, and no textures: **all models are procedural meshes** generated in `scripts/art/mesh_factory.gd` (soldiers, vehicles, trees, houses, drones), flat-shaded and vertex-coloured. The one exception is audio: `assets/audio/` holds CC0 recordings (provenance in its `SOURCES.md`), played by `scripts/audio/sfx.gd`.
+Everything is built in code from `scenes/main.tscn` — the only scene file. `scripts/main.gd` assembles the world at runtime: environment/lighting, then either the start menu (`scripts/ui/menu.gd` over a unit-less generated backdrop, via `Game.show_menu`) or `Battle` (from a mission dict), plus `CameraRig`, `Hud`, `InputController`. Scenario presets live in `scripts/data/scenarios.gd`. There are no other .tscn files and no textures; the only imported images are the generated branding icon/splash in `assets/branding/`: **all models are procedural meshes** generated in `scripts/art/mesh_factory.gd` (soldiers, vehicles, trees, houses, drones), flat-shaded and vertex-coloured. The one exception is audio: `assets/audio/` holds CC0 recordings (provenance in its `SOURCES.md`), played by `scripts/audio/sfx.gd`.
 
 Key structural facts that span files:
 
@@ -40,7 +40,7 @@ Key structural facts that span files:
 
 ## Conventions
 
-- Commit messages use Conventional Commits (`feat:`, `fix:`, `chore:`, …). Never mention the name "Posadka" in commit messages or anything else that leaves the repo — it is a working title.
+- Commit messages use Conventional Commits (`feat:`, `fix:`, `chore:`, …). Never mention the name "Posadka" in commit messages or anything else that leaves the repo — it is a working title. The public brand is "Heroi" / "ГЕРОЇ" (branding assets regenerate via `scripts/dev/make_branding.gd`).
 - `*.gd.uid` files are Godot-generated; commit them alongside their scripts, never edit them.
 - Input is touch-first (landscape phone); desktop mouse is handled directly, not through touch emulation (`emulate_touch_from_mouse=false`).
 - Tone constraints from the GDD apply to content work: fictional places/units, no gore or kill-cams, no "Z"/"V" symbolism, sober presentation.
