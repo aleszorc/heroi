@@ -14,7 +14,7 @@ Mobile real-time tactics with pause, in an isometric 3D view. You command a rein
 4. **Readable at a glance on a phone.** Team discs, clear state colours, chunky low-poly silhouettes, an always-visible roster.
 
 ### Tone and sensitivity
-- The war is real and ongoing. The game is sober, not gleeful: no kill-cams, no score popups for kills. Hits draw blood — an impact mist, pools spreading under the fallen and the bleeding, smears where casualties are dragged — shown matter-of-factly as a cost, never celebrated. Bodies stay on the field.
+- The war is real and ongoing. The game is sober, not gleeful: no gore, no kill-cams, no score popups for kills. Bodies stay on the field.
 - Places, units and people are **fictional**. Equipment is real and depicted accurately and generically. The game does not recreate named real battles or real brigades.
 - The player commands Ukrainian forces. The opponent is presented as an army, not as caricatures. The game never uses "Z" or "V" symbolism on enemy assets.
 - Monetisation stays clean (premium or premium plus campaign DLC). No loot boxes or pay-to-win. Consider donating a share of revenue to humanitarian demining or medical charities and say so in the store listing.
@@ -173,7 +173,6 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 - **Reacting to fire:** when effective fire lands on a squad (a suppression jolt ≥ 9 after cover), every free man dives within 0.1–0.3 s (his own delay) to the nearest micro-cover inside ~2.5 m — or simply flat, facing the threat — and stays low for ~4 s; men already flat or standing in trenches, buildings or behind walls just duck. The squad then adapts through the normal suppression logic: return fire, crawl, or bound (`Defs.REACT`).
 - **Cover-to-cover rushes:** in contact on a normal Move, each man of the moving fire team picks his own cover spot a bound (12 m) ahead and sprints there crouched. The covering team holds the cover it last rushed to. The next bound starts only when every rusher is down.
 - **Tactical walk:** with the enemy known within 220 m, walking men drop to a crouched walk.
-- **Blood:** hits burst a brief dark mist and droplets at the impact and splash the ground along the shot; pools grow under killed and bleeding men (until treated, moved or back up); dragged casualties leave smears. All of it is vertex-coloured ground quads in two MultiMeshes (ring buffers of 384 splats and 96 pools), textureless and shadowless — phone-cheap.
 - **Grenades:**
   - Riflemen carry two and lob one at enemy infantry 8–30 m away (35% chance per firing decision, one per squad every 8 s), with a wind-up and throw animation.
   - The grenade arcs, rolls and goes off after 3.6 s (6 m radius; also chips walls).

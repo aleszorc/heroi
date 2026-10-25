@@ -128,8 +128,6 @@ var walking_wounded := false
 var recover_t := 0.0
 ## After reacting to effective fire he keeps flat until this sim time.
 var stay_low_until := -99.0
-## Where the last drag smear was left (Vector3.INF = none yet).
-var last_smear := Vector3.INF
 ## Rescue job: "" (none), "go" (run to the casualty), "drag" (pull him to cover), "aid".
 var task := ""
 var patient: Soldier = null
@@ -560,7 +558,6 @@ func die(knock: Vector3, up_speed: float, is_wounded := false) -> void:
 	stabilized = false
 	walking_wounded = false
 	recover_t = 0.0
-	last_smear = Vector3.INF
 	bleed = float(Defs.WOUNDED_FIGHT["bleed_time"])
 	action = ""
 	task = ""

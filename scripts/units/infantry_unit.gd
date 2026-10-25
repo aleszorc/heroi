@@ -626,17 +626,10 @@ func _do_task(s: Soldier, dt: float, neighbours: Array[Soldier]) -> void:
 				var side := Vector3(dir.z, 0.0, -dir.x) * 0.16
 				s.face_point = chest
 				s.hand_targets = [chest + side, chest - side]
-				# The casualty leaves a smear on the ground every stretch of the drag.
-				if w.last_smear == Vector3.INF or _flat(w.position, w.last_smear) > 0.8:
-					w.last_smear = w.position
-					battle.fx.blood_smear(w.position, w.facing)
 			if _flat(s.position, s.drag_to) < 0.7:
 				w.carried_by = null
 				s.task = "aid"
 				s.task_timer = 0.0
-				if not w.stabilized:
-					# Still bleeding where he was dropped.
-					battle.fx.blood_pool(w)
 		"aid":
 			s.slung = true
 			s.want_crouch = 1.0
@@ -860,7 +853,6 @@ func take_hit(pos: Vector3, shooter: Unit) -> void:
 	if shooter != null:
 		dir = Vector3(s.position.x - shooter.position.x, 0.0, s.position.z - shooter.position.z)
 		dir = dir.normalized() if dir.length() > 0.5 else Vector3.ZERO
-	battle.fx.blood_hit(s.center(), dir, s.position.y)
 	casualty(s, shooter, dir * randf_range(1.0, 2.2), 0.0, randf() < WOUND_CHANCE_BULLET)
 
 
@@ -876,7 +868,6 @@ func apply_blast(pos: Vector3, radius: float, lethal: float, supp: float, _pen: 
 			var chance := lethal * (1.0 - d / radius) * (1.0 - map.cover_from(s.position, pos) * 0.65) * (0.6 + 0.4 * s.exposure())
 			if randf() < chance:
 				var force := (1.0 - d / radius) * radius
-				battle.fx.blood_hit(s.center(), away.normalized(), s.position.y)
 				casualty(s, null, away.normalized() * force * 1.6, force * 0.9, randf() < WOUND_CHANCE_BLAST)
 	for s in members:
 		# A blast can finish off a man already down (the walking wounded go through
@@ -898,7 +889,6 @@ func casualty(s: Soldier, shooter: Unit, knock: Vector3, up_speed: float, wounde
 	# A walking wounded going down again was already counted as a loss once.
 	var recounted := s.walking_wounded
 	s.die(knock, up_speed, wounded)
-	battle.fx.blood_pool(s)
 	if shooter != null:
 		shooter.kills += 1
 	morale_hit(10.0)
