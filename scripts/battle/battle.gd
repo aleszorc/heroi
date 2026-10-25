@@ -385,8 +385,9 @@ func blast(pos: Vector3, radius: float, lethal: float, supp: float, pen: float, 
 			if b.near(pos, struct_radius):
 				b.damage(pos, struct_power, struct_radius)
 	if radius >= 4.0 and map.type_at(pos) != BattleMap.T.BUILDING:
-		view.spawn_crater(Vector3(pos.x, map.height_at(pos), pos.z), radius)
 		map.mark_crater(pos, clampf(radius * 0.45, 1.5, 3.2))
+		# Dig the real heightfield and rebuild only the touched ground chunks.
+		view.refresh_ground(map.deform_crater(pos, radius))
 
 
 func suppress_area(pos: Vector3, r: float, amount: float, exclude: Unit, from_side: int) -> void:

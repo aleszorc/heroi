@@ -53,8 +53,9 @@ Campaign map ─► Briefing & deployment ─► Battle (real-time, pausable) �
 | Rubble | .50 | .50 | 1.6 | 3.0 | .85 |
 | Wreck | .60 | .50 | 1.3 | impassable | .5 |
 
-- Trenches are dug to standing depth — about 1.7 m of real digging, drawn 2.1 world units deep to match the soldiers' 1.25× scale, with a low spoil berm on the lip — so a standing soldier is roughly head-level with the ground. Gullies sink 1.4; craters dimple 0.4–1.0 depending on how densely they cluster.
-- Big explosions create new craters at runtime, so cover changes as the battle goes on. The painted footprint and the crater model scale with the blast radius.
+- Trenches are dug to standing depth — about 1.7 m of real digging, drawn 2.1 world units deep to match the soldiers' 1.25× scale, with a low spoil berm on the lip — so a standing soldier is roughly head-level with the ground. Gullies sink 1.4.
+- Craters are real heightfield deformation, not placed props: a parabolic dish (a lone shell hole is 0.4–0.6 deep, footprint and depth scale with the blast) ringed by a thrown-earth rim lip (~35% of the depth, capped at 0.3), vertex-coloured from scorched char at the centre through disturbed earth at the rim. Overlapping hits deepen the same hole toward a saturation depth of 1.2 — never beyond, and never stacked geometry. Painted CRATER cells at map build use the same profile, so pre-war shelling and fresh hits look alike. Only soft ground (open, field, road, crater) deforms; buildings, trenches, gullies and treelines keep their heights.
+- Big explosions create new craters at runtime, so cover changes as the battle goes on: the ground mesh is chunked (10×10 chunks of 12×12 cells) and a blast rebuilds only the chunks it touches.
 - Smoke grenades cut visibility to 30% per cell crossed for about 35 s.
 
 ### 3.2 Units
@@ -307,8 +308,8 @@ Godot 4.7, GDScript, Mobile renderer. Everything is built in code from `scenes/m
 | `scripts/core/game.gd` | Autoload: pause and speed, side constants, test arguments |
 | `scripts/data/defs.gd` | Weapon and unit tables (all balance numbers) |
 | `scripts/data/mission_treeline.gd` | Mission: map painting, buildings, units, waves |
-| `scripts/map/battle_map.gd` | Grid, terrain properties, heights, A* paths, LOS, cover search |
-| `scripts/map/map_view.gd` | Ground mesh, multimesh trees and props, buildings, wrecks |
+| `scripts/map/battle_map.gd` | Grid, terrain properties, heights, crater deformation, A* paths, LOS, cover search |
+| `scripts/map/map_view.gd` | Chunked ground mesh with local rebuild, multimesh trees and props, buildings, wrecks |
 | `scripts/art/mesh_factory.gd` | All procedural models (soldiers, vehicles, trees, houses, drones) |
 | `scripts/units/*.gd` | `Unit` base (orders, morale, spotting state), `InfantryUnit`, `Soldier` (rig, animation, steering), `VehicleUnit` |
 | `scripts/map/building.gd` | Destructible houses: pieces, damage, debris, roof collapse, grid upkeep |

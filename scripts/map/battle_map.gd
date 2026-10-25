@@ -39,6 +39,12 @@ var conceal := PackedFloat32Array()
 var los_keep := PackedFloat32Array()
 var smoke_until := PackedFloat32Array()
 var heights := PackedFloat32Array()
+## Per-corner crater bookkeeping: cumulative dig below the base ground and the
+## current thrown-earth rim lift above it. `heights` always equals the base
+## terrain height minus crater_depth plus crater_rim, so overlapping blasts
+## deepen one hole instead of stacking geometry.
+var crater_depth := PackedFloat32Array()
+var crater_rim := PackedFloat32Array()
 ## Simulation clock, kept in sync by Battle so smoke can expire.
 var now := 0.0
 
@@ -57,6 +63,8 @@ func _init() -> void:
 	los_keep.resize(n)
 	smoke_until.resize(n)
 	heights.resize((W + 1) * (H + 1))
+	crater_depth.resize((W + 1) * (H + 1))
+	crater_rim.resize((W + 1) * (H + 1))
 	for y in H:
 		for x in W:
 			set_cell(Vector2i(x, y), T.OPEN)
@@ -172,6 +180,75 @@ func mark_crater(p: Vector3, r := 1.5) -> void:
 	paint_disc(Vector2(p.x, p.z), r, T.CRATER, [T.OPEN, T.FIELD, T.ROAD])
 
 
+## Crater deformation: a lone shell hole dishes 0.4-0.6 into the ground with a
+## thrown-earth rim; repeated hits on the same spot deepen the hole toward
+## CRATER_SAT and never beyond, so saturation fire churns the field flat-bottomed
+## instead of digging to the mantle or piling geometry.
+const CRATER_SAT := 1.2
+const CRATER_RIM_MAX := 0.3
+## Ground soft enough to dig. A corner deforms only when every cell touching it is
+## soft, so buildings, trenches, gullies, rubble and treelines keep their built heights.
+const CRATER_SOFT := [T.OPEN, T.FIELD, T.ROAD, T.CRATER]
+
+
+## Digs a real crater into the heightfield: a dished centre with a raised rim lip,
+## both scaled by the blast radius. Returns the affected cell rect so the view can
+## rebuild just those ground chunks.
+func deform_crater(p: Vector3, blast_radius: float) -> Rect2i:
+	var dish_r := clampf(blast_radius * 0.45, 1.5, 3.2)
+	var depth := clampf(blast_radius * 0.08, 0.4, 0.6)
+	var rng := RandomNumberGenerator.new()
+	rng.seed = hash(Vector2i(int(p.x * 7.3), int(p.z * 7.3)))
+	_apply_crater(Vector2(p.x, p.z), dish_r, depth, 0.35 * depth, rng)
+	var rim_r := dish_r * 1.45
+	var cx0 := maxi(int(floor((p.x - rim_r + HALF) / CELL)) - 1, 0)
+	var cy0 := maxi(int(floor((p.z - rim_r + HALF) / CELL)) - 1, 0)
+	var cx1 := mini(int(ceil((p.x + rim_r + HALF) / CELL)) + 1, W - 1)
+	var cy1 := mini(int(ceil((p.z + rim_r + HALF) / CELL)) + 1, H - 1)
+	return Rect2i(cx0, cy0, cx1 - cx0 + 1, cy1 - cy0 + 1)
+
+
+## The shared dish-and-rim profile, used by runtime blasts and painted shell holes
+## alike. Inside dish_r the ground sinks on a parabolic bowl (any older rim caught
+## in the dish is blasted flat first); from dish_r out to 1.45x the thrown earth
+## rises into a ragged lip that peaks just outside the dish edge.
+func _apply_crater(center: Vector2, dish_r: float, depth: float, rim_h: float, rng: RandomNumberGenerator) -> void:
+	var rim_r := dish_r * 1.45
+	var cx0 := maxi(int(floor((center.x - rim_r + HALF) / CELL)), 0)
+	var cy0 := maxi(int(floor((center.y - rim_r + HALF) / CELL)), 0)
+	var cx1 := mini(int(ceil((center.x + rim_r + HALF) / CELL)), W)
+	var cy1 := mini(int(ceil((center.y + rim_r + HALF) / CELL)), H)
+	for y in range(cy0, cy1 + 1):
+		for x in range(cx0, cx1 + 1):
+			if not _corner_diggable(x, y):
+				continue
+			var i := y * (W + 1) + x
+			var d := Vector2(x * CELL - HALF, y * CELL - HALF).distance_to(center)
+			if d < dish_r:
+				heights[i] -= crater_rim[i]
+				crater_rim[i] = 0.0
+				var add := depth * (1.0 - pow(d / dish_r, 2.0)) * rng.randf_range(0.8, 1.2)
+				var new_depth := minf(crater_depth[i] + add, CRATER_SAT)
+				heights[i] -= new_depth - crater_depth[i]
+				crater_depth[i] = new_depth
+			elif d < rim_r:
+				var t := (d - dish_r) / (rim_r - dish_r)
+				var add := rim_h * sin(t * PI) * rng.randf_range(0.7, 1.3)
+				var new_rim := minf(crater_rim[i] + add, CRATER_RIM_MAX)
+				heights[i] += new_rim - crater_rim[i]
+				crater_rim[i] = new_rim
+
+
+func _corner_diggable(x: int, y: int) -> bool:
+	for d: Vector2i in [Vector2i(-1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 0)]:
+		var c := Vector2i(x, y) + d
+		if not in_bounds(c):
+			continue
+		if not CRATER_SOFT.has(int(cells[c.y * W + c.x])):
+			return false
+	return true
+
+
 func add_smoke(p: Vector3, r: float, duration: float) -> void:
 	var c := world_to_cell(p)
 	var rc := int(ceil(r / CELL))
@@ -221,7 +298,8 @@ func _apply_cost(c: Vector2i) -> void:
 const TRENCH_DEPTH := 2.1
 
 ## Corner heights: trenches sink to standing depth with a spoil berm on the lip,
-## gullies are sunk, craters dimple the ground deeper the denser they cluster.
+## gullies are sunk, painted shell holes get the same dish-and-rim profile as
+## runtime blasts so pre-war shelling and fresh hits read as one system.
 func _build_heights() -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 7
@@ -231,7 +309,6 @@ func _build_heights() -> void:
 		for x in W + 1:
 			var trench := 0
 			var gully := 0
-			var crater := 0
 			for d: Vector2i in [Vector2i(-1, -1), Vector2i(0, -1), Vector2i(-1, 0), Vector2i(0, 0)]:
 				var c := Vector2i(x, y) + d
 				if not in_bounds(c):
@@ -241,16 +318,12 @@ func _build_heights() -> void:
 						trench += 1
 					T.GULLY:
 						gully += 1
-					T.CRATER:
-						crater += 1
 			var h := rng.randf_range(-0.05, 0.05)
 			if gully >= 2:
 				h -= 1.4
 			elif trench >= 2:
 				h = -TRENCH_DEPTH + rng.randf_range(-0.08, 0.08)
 				floors[y * (W + 1) + x] = 1
-			elif crater >= 1:
-				h -= 0.25 + 0.17 * crater + rng.randf_range(0.0, 0.1)
 			heights[y * (W + 1) + x] = h
 	# Spoil berm: ground-level corners beside a trench floor rise into a low lip,
 	# so the parapet reads from the camera and the wall is a clean steep bank.
@@ -267,6 +340,15 @@ func _build_heights() -> void:
 				if floors[ny * (W + 1) + nx] == 1:
 					heights[i] += rng.randf_range(0.22, 0.34)
 					break
+	# Painted shell holes: one dish per CRATER cell; where the painting clusters,
+	# the dishes overlap and deepen toward CRATER_SAT like saturation fire.
+	for y in H:
+		for x in W:
+			if cells[y * W + x] != T.CRATER:
+				continue
+			var p := cell_to_world(Vector2i(x, y))
+			var c2 := Vector2(p.x + rng.randf_range(-0.5, 0.5), p.z + rng.randf_range(-0.5, 0.5))
+			_apply_crater(c2, 2.7, 0.42, 0.12, rng)
 
 
 func corner_height(x: int, y: int) -> float:
