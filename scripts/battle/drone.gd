@@ -35,7 +35,6 @@ var done := false
 var _tick := 0.0
 var _angle := 0.0
 var _orbiting := false
-var _warn: Label3D
 
 # FPV flight state.
 var _vel := Vector3.ZERO
@@ -75,14 +74,6 @@ func setup_fpv(b: Battle, s: int, start: Vector3, t: Unit) -> void:
 	_common(start)
 	var to := t.aim_point() - position
 	_vel = Vector3(to.x, 0.0, to.z).normalized() * speed
-	if s == Game.RU:
-		# Warning marker over the hunted unit: the player has seconds to react.
-		_warn = Unit._make_label()
-		_warn.text = "FPV!"
-		_warn.font_size = 34
-		_warn.modulate = Color(1.0, 0.3, 0.25)
-		_warn.top_level = true
-		add_child(_warn)
 
 
 ## The heavy bomber: flies in from `start` (its home edge), crosses to the target at
@@ -144,8 +135,6 @@ func _sim_fpv(dt: float) -> void:
 	_t += dt
 	if target.is_targetable():
 		var aim := target.aim_point()
-		if _warn != null:
-			_warn.global_position = aim + Vector3.UP * 4.0
 		if _will_hit or not _committed:
 			_impact = aim  # track the live target; a rolled miss keeps its locked point
 		if not _committed and Vector2(aim.x - position.x, aim.z - position.z).length() <= COMMIT_DIST:

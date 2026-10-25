@@ -270,7 +270,7 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 - **FPV (player):** 4 per battle, 12 s cooldown. Tap a spotted enemy. 80% hit (55% vs trench or building, 70% vs moving vehicle, 65% vs moving infantry). Top attack with 350 penetration, plus 4 m blast.
 - **Bomber drone model:** heavy agricultural-style hexacopter — olive tub on a carbon frame, six arms with big props, landing skids, up to four bombs on a belly rack that visibly empties.
 - **Bomber (player):** 2 sorties, 20 s cooldown, needs the Drone Team. Tap a spotted enemy: the hexacopter crosses in from the Ukrainian edge (13 m/s at 22 m altitude), slows over the target and drops 3–4 bombs a second apart, each aimed at where the target is at release with ~3 m scatter. The ~2 s fall means vehicles and pinned or stationary infantry take the string full on while units that move largely escape. Each bomb: top attack with 45 penetration (kills IFVs outright, roughly even odds on a tank roof), 5 m blast, heavy structural damage — a string levels a house. After the last bomb it turns for home and despawns at the edge. Ground fire brings it down more easily than an FPV (big, slow, long overhead).
-- **Enemy FPVs:** every 40–60 s against a recently spotted unit (priority: vehicles, then ATGM and MG teams, then targets in the open). A **FPV!** marker appears over the hunted unit, which scrambles for cover on its own; moving and cover reduce the hit chance. Infantry within 35 m can shoot it down.
+- **Enemy FPVs:** every 40–60 s against a recently spotted unit (priority: vehicles, then ATGM and MG teams, then targets in the open). The hunted unit scrambles for cover on its own; moving and cover reduce the hit chance. Infantry within 35 m can shoot it down. The rising whine is the warning cue — no marker.
 - No drone team means no drones. Protecting the operators matters.
 
 ### 3.7b Scenarios (procedural)
@@ -296,7 +296,7 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 - **Top right:** rotate, speed (1×/2×), menu (☰ — opens the options overlay, which freezes the sim: RESUME restores the previous state, RESTART replays the same kind+seed, EXIT TO MENU returns to the start menu, QUIT closes the game). There is no player pause; `Game.paused` remains an internal mechanism for deployment, the options overlay and the end screen.
 - **Bottom:** roster cards (name, men alive, state colour). Tap a card to select and centre the camera.
 - **Right edge:** support (Mortar, Recon, FPV, Bomber) with charges and cooldowns; each arms a mode for the next tap, shown as a prompt with Cancel.
-- The message feed carries outcomes only: battle start and end, objectives taken or lost, units destroyed or lost. No advice, warnings or contact reports — the world itself (FX, the FPV! marker, roster state colours) is the feedback.
+- The message feed carries outcomes only: battle start and end, objectives taken or lost, units destroyed or lost. No advice, warnings or contact reports — the world itself (FX, the FPV whine, roster state colours) is the feedback.
 - **Desktop debug:** mouse acts as touch, wheel zooms, WASD pans, Q/E rotate, Esc backs out one layer (armed support mode → selection → options overlay).
 
 Planned:
