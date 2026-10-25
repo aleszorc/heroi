@@ -28,6 +28,9 @@ var _pitch_v := 0.0
 var _roll_v := 0.0
 var _yaw_rate := 0.0
 var _dust_acc := 0.0
+## Timers for acting without orders (pace re-pick, FPV dodge).
+var _auto_tick := 0.0
+var _next_dodge := 0.0
 
 
 func _build() -> void:
@@ -93,14 +96,39 @@ func _on_path_set(target: Vector3) -> void:
 
 func _speed() -> float:
 	var s: float = def["speed"]
-	if order != Order.FAST:
+	if pace != Pace.RUN:
 		s *= 0.7
 	if reversing:
 		s *= 0.5
 	return s * map.speed_factor(position, true)
 
 
+## Acting without orders: re-pick the pace mid-drive and scramble away from an FPV.
+func _auto_tactics() -> void:
+	if not arrived:
+		if battle.time >= pace_lock:
+			pace = _choose_pace()
+		return
+	if not can_move() or battle.time < _next_dodge:
+		return
+	var fpv := incoming_fpv()
+	if fpv == null:
+		return
+	var away := Vector3(position.x - fpv.position.x, 0.0, position.z - fpv.position.z)
+	away = away.normalized() if away.length() > 1.0 else forward()
+	for dir: Vector3 in [away, Vector3(-away.z, 0.0, away.x), Vector3(away.z, 0.0, -away.x)]:
+		if _set_path(position + dir * 24.0):
+			pace = Pace.RUN
+			pace_lock = battle.time + 8.0
+			_next_dodge = battle.time + 12.0
+			return
+
+
 func _sim_move(dt: float) -> void:
+	_auto_tick -= dt
+	if _auto_tick <= 0.0:
+		_auto_tick = 0.7
+		_auto_tactics()
 	if immobile and not arrived:
 		_halt()
 	var target_speed := 0.0
@@ -187,8 +215,6 @@ func _aim_turret(dt: float) -> void:
 	var aim_at := position + forward() * 10.0
 	if fire_target != null and fire_target.is_targetable():
 		aim_at = fire_target.position
-	elif area_fire:
-		aim_at = fire_point
 	elif _aim_unit != null and _aim_unit.is_targetable():
 		aim_at = _aim_unit.position
 	var want := wrapf(yaw_to(aim_at - position) - heading, -PI, PI)
@@ -214,17 +240,6 @@ func _sim_fire(dt: float) -> void:
 		var w: Dictionary = Defs.WEAPONS[wid]
 		if w.get("halt", false) and not arrived:
 			cooldowns[wid] = 0.5
-			continue
-		if area_fire:
-			if w.get("at_only", false) or position.distance_to(fire_point) > float(w["range"]):
-				cooldowns[wid] = 0.6
-			elif not _turret_on(fire_point):
-				cooldowns[wid] = 0.2
-			elif Combat.fire_area(battle, self, from, wid, fire_point, acc):
-				cooldowns[wid] = float(w["reload"]) * randf_range(0.9, 1.2)
-				last_fired = battle.time
-			else:
-				cooldowns[wid] = 0.6
 			continue
 		var t := pick_target(w, position)
 		if t == null:
@@ -261,7 +276,6 @@ func take_penetration(pen: float, src: Vector3, top: bool, shooter: Unit) -> voi
 	var value: float
 	if top:
 		if def.get("cage", false) and randf() < 0.4:
-			battle.notify_msg("%s: cage stopped the drone" % display_name, Color(1.0, 0.8, 0.5))
 			return
 		value = armor[2]
 	else:
@@ -269,29 +283,19 @@ func take_penetration(pen: float, src: Vector3, top: bool, shooter: Unit) -> voi
 		value = armor[0] if forward().dot(to_src) > 0.64 else armor[1]
 	if pen * randf_range(0.85, 1.15) < value:
 		receive_suppression(25.0)
-		if side == Game.UA:
-			battle.notify(self, "%s: hit, no penetration" % display_name, false)
 		return
 	var r := randf()
 	if r < 0.55:
 		_destroy(shooter)
 	elif r < 0.72:
 		immobile = true
-		battle.notify_any(self, "%s immobilized" % _name_for_msg())
 	elif r < 0.88:
 		gun_out = true
-		battle.notify_any(self, "%s: weapons knocked out" % _name_for_msg())
 	else:
 		crew -= 1
 		morale_hit(25.0)
 		if crew <= 0:
 			_destroy(shooter)
-		else:
-			battle.notify_any(self, "%s: crew wounded" % _name_for_msg())
-
-
-func _name_for_msg() -> String:
-	return display_name if side == Game.UA else "Enemy " + String(def["name"])
 
 
 func _destroy(shooter: Unit) -> void:

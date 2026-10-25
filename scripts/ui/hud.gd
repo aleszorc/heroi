@@ -1,19 +1,13 @@
 class_name Hud
 extends CanvasLayer
-## Touch HUD: clock and objectives, pause/speed/rotate, unit roster, order bar,
-## support buttons, prompts, deployment briefing and the end screen.
+## Touch HUD: clock and objectives, pause/speed/rotate, unit roster, support buttons,
+## prompts, deployment briefing and the end screen. There is no order menu: units get
+## only move and attack taps and handle their own tactics.
 
 const PROMPTS := {
-	"move": "Tap destination",
-	"fast": "Tap destination (fast, no firing)",
-	"sneak": "Tap destination (slow, stays hidden)",
-	"fire": "Tap an enemy, or ground for suppressive fire",
-	"smoke": "Tap where to throw smoke (within 40 m)",
 	"mortar": "Tap target for 82mm mortar (6 rounds)",
 	"recon": "Tap area for the recon drone",
 	"fpv": "Tap a spotted enemy for an FPV strike",
-	"defend": "Drag or tap to set the facing to defend",
-	"ambush": "Drag or tap to set the ambush facing",
 }
 
 var battle: Battle
@@ -38,8 +32,6 @@ var _end: Control
 var _end_title: Label
 var _end_text: Label
 var _selected_box: StyleBoxFlat
-var _menu: PanelContainer
-var _menu_list: VBoxContainer
 var _quit: Control
 ## Pause state to restore when the quit dialog is cancelled mid-battle.
 var _quit_was_paused := false
@@ -61,7 +53,6 @@ func setup(b: Battle, c: InputController, camera: CameraRig) -> void:
 	_build_prompt()
 	_build_setup()
 	_build_end()
-	_build_menu()
 	_build_quit()
 	battle.message.connect(msg)
 	battle.ended.connect(_on_ended)
@@ -384,66 +375,6 @@ func _restart(kind: String, mission_seed: int) -> void:
 	get_tree().reload_current_scene()
 
 
-## Command menu that pops up where a unit is held, like Close Combat's right-click menu.
-func _build_menu() -> void:
-	_menu = PanelContainer.new()
-	_root.add_child(_menu)
-	_blockers.append(_menu)
-	_menu_list = VBoxContainer.new()
-	_menu_list.add_theme_constant_override("separation", 4)
-	_menu.add_child(_menu_list)
-	_menu.visible = false
-
-
-## Order entries for a unit: [label, action]; the action doubles as the icon name.
-func _commands(u: Unit) -> Array:
-	var out := [["MOVE", "move"], ["FAST", "fast"]]
-	if not u.is_vehicle:
-		out.append(["SNEAK", "sneak"])
-	out.append(["FIRE", "fire"])
-	if not u.is_vehicle and u.smoke_left > 0:
-		out.append(["SMOKE %d" % u.smoke_left, "smoke"])
-	out.append(["DEFEND", "defend"])
-	out.append(["AMBUSH", "ambush"])
-	out.append(["STOP", "stop"])
-	return out
-
-
-func _run_command(u: Unit, action: String) -> void:
-	hide_menu()
-	if action == "stop":
-		u.order_stop()
-		on_selection(u)
-	else:
-		ctl.set_mode(action)
-
-
-func show_menu(u: Unit, at: Vector2) -> void:
-	for c in _menu_list.get_children():
-		# Removed immediately, or the stale entries still count towards the menu's size.
-		_menu_list.remove_child(c)
-		c.queue_free()
-	var title := Label.new()
-	title.text = u.display_name
-	title.add_theme_color_override("font_color", Color(1.0, 0.86, 0.3))
-	_menu_list.add_child(title)
-	for entry: Array in _commands(u):
-		var action: String = entry[1]
-		var mb := _button(String(entry[0]), func() -> void: _run_command(u, action), Vector2(176, 48), action)
-		mb.alignment = HORIZONTAL_ALIGNMENT_LEFT
-		_menu_list.add_child(mb)
-	_menu.visible = true
-	_menu.reset_size()
-	var screen := get_viewport().get_visible_rect().size
-	var size := _menu.get_combined_minimum_size()
-	_menu.position = Vector2(clampf(at.x + 24.0, 8.0, screen.x - size.x - 8.0), clampf(at.y - size.y * 0.5, 8.0, screen.y - size.y - 8.0))
-
-
-func hide_menu() -> void:
-	if _menu != null:
-		_menu.visible = false
-
-
 ## Confirm overlay for quitting mid-battle; one stray tap must never dump the
 ## player back to the briefing, so the top-right quit button only opens this.
 func _build_quit() -> void:
@@ -486,7 +417,6 @@ func _confirm_quit() -> void:
 func show_quit_confirm() -> void:
 	if battle.phase == Battle.Phase.ENDED or _quit.visible:
 		return
-	hide_menu()
 	ctl.set_mode("")
 	_quit_was_paused = Game.paused
 	Game.paused = true

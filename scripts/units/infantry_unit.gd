@@ -6,6 +6,11 @@ extends Unit
 ## Men also act on their own: in contact the moving fire team sprints man by man to its
 ## next cover; riflemen lob grenades at close enemies; and when someone goes down wounded,
 ## the nearest free comrade runs over, drags him into cover and gives first aid.
+##
+## The squad fights without micromanagement: it picks its own pace (run out of contact,
+## creep when closing unseen, walk and bound in a firefight), guards facing the threat on
+## arrival, holds fire while hidden, pops smoke when pinned in the open, scrambles away
+## from an FPV hunting it, and shifts a few metres to better cover under sustained fire.
 
 ## Situational formations, picked from context while moving (see _choose_formation):
 ## WEDGE in the open, COLUMN through trees/trenches and when running or sneaking,
@@ -32,6 +37,10 @@ const GRENADE_COOLDOWN := 8.0
 const STACK_RANGE := 14.0
 ## A known enemy closer than this, roughly ahead, makes an advancing squad go on line.
 const ASSAULT_RANGE := 90.0
+## Closing on a known enemy inside this range while still unseen, the squad creeps.
+const SNEAK_RANGE := 80.0
+const SMOKE_COOLDOWN := 30.0
+const REPOSITION_CD := 15.0
 
 var members: Array[Soldier] = []
 ## Where danger comes from: the nearest known enemy, or straight ahead.
@@ -55,6 +64,9 @@ var _next_grenade := 0.0
 var _formation := -1
 ## Earliest sim time the squad may dive for cover again (reaction rate limit).
 var _react_cd := -99.0
+## Cooldowns for acting without orders: smoke and local repositioning.
+var _next_smoke := 0.0
+var _next_repos := 0.0
 
 
 func _build() -> void:
@@ -140,13 +152,13 @@ func _speed() -> float:
 	if state == State.PANICKED or state == State.ROUTED:
 		return Soldier.RUN_SPEED
 	var s := Soldier.WALK_SPEED
-	match order:
-		Order.FAST:
+	match pace:
+		Pace.RUN:
 			s = Soldier.RUN_SPEED
-		Order.SNEAK:
+		Pace.SNEAK:
 			s = Soldier.CROUCH_SPEED
 	# Under fire, anything short of a sprint becomes a crawl.
-	if state == State.SUPPRESSED and order != Order.FAST:
+	if state == State.SUPPRESSED and pace != Pace.RUN:
 		s = Soldier.CRAWL_SPEED
 	return s * map.speed_factor(position, false)
 
@@ -215,7 +227,7 @@ func _choose_formation() -> int:
 	if state >= State.SUPPRESSED or suppression > 35.0:
 		return Form.DISPERSED
 	var t := map.type_at(position)
-	if order == Order.FAST or order == Order.SNEAK or t == BattleMap.T.TREES \
+	if pace != Pace.WALK or t == BattleMap.T.TREES \
 			or t == BattleMap.T.TRENCH or t == BattleMap.T.BUILDING:
 		return Form.COLUMN
 	if _contact and _flat(threat, position) < ASSAULT_RANGE:
@@ -362,6 +374,59 @@ func _update_threat() -> void:
 		threat = position + ahead * 60.0
 
 
+func _threat_dir() -> Vector3:
+	var to := Vector3(threat.x - position.x, 0.0, threat.z - position.z)
+	return to.normalized() if to.length() > 0.5 else super._threat_dir()
+
+
+## Run when out of contact, creep when closing unseen on a known enemy, otherwise
+## walk (and bound by fire teams once in contact).
+func _choose_pace() -> int:
+	if state >= State.PANICKED:
+		return Pace.RUN
+	var d := known_enemy_distance()
+	if d > CONTACT_RANGE and suppression < 20.0:
+		return Pace.RUN
+	if d < SNEAK_RANGE and state == State.OK and not seen[1 - side]:
+		return Pace.SNEAK
+	return Pace.WALK
+
+
+## Acting without orders while holding: smoke when pinned in the open, dodge an FPV
+## coming for the squad, shift to better cover under sustained fire. Repositioning
+## stays local — the squad never abandons the area it was sent to.
+func _auto_tactics() -> void:
+	_auto_smoke()
+	if not can_move() or battle.time < _next_repos:
+		return
+	var fpv := incoming_fpv()
+	if fpv != null:
+		var away := Vector3(position.x - fpv.position.x, 0.0, position.z - fpv.position.z)
+		away = away.normalized() if away.length() > 1.0 else _retreat_dir()
+		if _set_path(map.best_cover_near(position + away * 14.0, 4, {}, threat)):
+			pace = Pace.RUN
+			pace_lock = battle.time + 6.0
+			_next_repos = battle.time + 10.0
+		return
+	if _contact and suppression > 30.0 and cover_here() < 0.3:
+		var dest := map.best_cover_near(position + (position - threat).normalized() * 8.0, 5, {}, threat)
+		if map.cover_at(dest) > cover_here() + 0.15 and _set_path(dest):
+			_next_repos = battle.time + REPOSITION_CD
+
+
+## A squad pinned in the open pops smoke between itself and the shooter.
+func _auto_smoke() -> void:
+	if smoke_left <= 0 or battle.time < _next_smoke or state < State.PINNED \
+			or not _contact or cover_here() >= 0.4:
+		return
+	var to := Vector3(threat.x - position.x, 0.0, threat.z - position.z)
+	if to.length() < 1.0:
+		return
+	var at := position + to.normalized() * minf(to.length() * 0.5, SMOKE_RANGE * 0.7)
+	if throw_smoke(at):
+		_next_smoke = battle.time + SMOKE_COOLDOWN
+
+
 func _sim_move(dt: float) -> void:
 	_threat_tick -= dt
 	if _threat_tick <= 0.0:
@@ -370,8 +435,16 @@ func _sim_move(dt: float) -> void:
 		_contact = _in_contact()
 		_assign_rescue()
 		if not arrived and state != State.PINNED:
-			# The situation changes mid-move: re-check the formation against it.
+			# The situation changes mid-move: re-check the pace and formation against it.
+			if battle.time >= pace_lock:
+				var want := _choose_pace()
+				if want != pace:
+					pace = want
+					if pace == Pace.RUN:
+						fire_target = null
 			_apply_formation(_choose_formation())
+		elif arrived:
+			_auto_tactics()
 	_medical(dt)
 	if not arrived and state != State.PINNED:
 		_advance_leader(dt)
@@ -391,7 +464,7 @@ func _sim_move(dt: float) -> void:
 ## one team rushes BOUND_LENGTH metres while the other covers, then they swap.
 func _advance_leader(dt: float) -> void:
 	var before := position
-	var contact := order == Order.MOVE and _in_contact()
+	var contact := pace == Pace.WALK and _in_contact()
 	if contact != _bounding:
 		_bounding = contact
 		_bound_left = BOUND_LENGTH
@@ -523,7 +596,6 @@ func _medical(dt: float) -> void:
 			if s.recover_t >= float(Defs.WOUNDED_FIGHT["recover_time"]):
 				s.recover()
 				s.aim_yaw = yaw_to(threat - s.position)
-				battle.notify(self, "%s: walking wounded back on his feet" % display_name, false)
 
 
 ## Sends one free man after the nearest untreated casualty, own squad first.
@@ -561,7 +633,6 @@ func _assign_rescue() -> void:
 	helper.task = "go"
 	helper.patient = best
 	best.rescuer = helper
-	battle.notify(self, "%s: man down, going to him" % display_name, false)
 
 
 func _cancel_task(s: Soldier) -> void:
@@ -649,7 +720,6 @@ func _do_task(s: Soldier, dt: float, neighbours: Array[Soldier]) -> void:
 					w.rescuer = null
 					s.patient = null
 					_cancel_task(s)
-					battle.notify(self, "%s: wounded man stabilized" % display_name, false)
 
 
 # --- Reacting to fire, hand signals ---
@@ -714,11 +784,11 @@ func _choose_stance(s: Soldier, stationary: bool) -> void:
 	elif not stationary:
 		if _bounding and s.rush_pos != Vector3.INF and s.team == _moving_team:
 			c = 0.35
-		elif order == Order.FAST:
+		elif pace == Pace.RUN:
 			pass
 		elif state == State.SUPPRESSED:
 			p = 1.0
-		elif order == Order.SNEAK:
+		elif pace == Pace.SNEAK:
 			c = 0.9
 		elif _contact:
 			# Enemy about: tactical crouched walk, staying low.
@@ -744,7 +814,7 @@ func _choose_stance(s: Soldier, stationary: bool) -> void:
 func _sim_fire(dt: float) -> void:
 	if state >= State.PANICKED:
 		return
-	if not arrived and order == Order.FAST:
+	if not arrived and pace == Pace.RUN:
 		return
 	var acc := _accuracy()
 	for s in members:
@@ -758,34 +828,22 @@ func _sim_fire(dt: float) -> void:
 			continue
 		var w: Dictionary = Defs.WEAPONS[s.weapon]
 		var reload: float = w["reload"]
-		var aim := Vector3.INF
-		var t: Unit = null
-		if area_fire:
-			if not w.get("at_only", false) and s.position.distance_to(fire_point) <= float(w["range"]):
-				aim = fire_point
-		else:
-			t = pick_target(w, s.position)
-			if t != null:
-				aim = t.position
-		if aim == Vector3.INF:
+		var t := pick_target(w, s.position)
+		if t == null:
 			s.cooldown = 0.4
 			continue
 		s.engage_until = battle.time + 2.5
-		s.aim_yaw = yaw_to(aim - s.position)
+		s.aim_yaw = yaw_to(t.position - s.position)
 		if _try_grenade(s, t):
 			continue
 		if not s.can_fire():
 			s.cooldown = 0.25
 			continue
-		var fired := false
 		# Men of the covering team fire from a halt at full accuracy.
 		var a := acc * (2.0 if not arrived and s.vel.length() < 0.3 else 1.0)
 		if s.walking_wounded:
 			a *= float(Defs.WOUNDED_FIGHT["acc"])
-		if t != null:
-			fired = Combat.fire(battle, self, s.muzzle(), s.weapon, t, a)
-		else:
-			fired = Combat.fire_area(battle, self, s.muzzle(), s.weapon, fire_point, a)
+		var fired := Combat.fire(battle, self, s.muzzle(), s.weapon, t, a)
 		if fired:
 			s.cooldown = reload * randf_range(0.8, 1.3)
 			s.fired(battle.time)

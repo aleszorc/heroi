@@ -22,9 +22,6 @@ func _ready() -> void:
 	if Game.has_arg("gait"):
 		_gait_demo()
 		return
-	if Game.has_arg("menutest"):
-		_menu_test()
-		return
 	if Game.has_arg("rescue"):
 		_rescue_demo()
 		return
@@ -43,10 +40,13 @@ func _ready() -> void:
 			cam.focus_now(Vector3(-28, 0, 27))],
 		[40, func() -> void: _shot("trench_crouch")],
 		[45, func() -> void:
-			sq1.order_move(Vector3(-30, 0, 52), Unit.Order.FAST)
+			sq1.order_move(Vector3(-30, 0, 52))
+			_force_pace(sq1, Unit.Pace.RUN)
 			cam.focus_now(Vector3(-29, 0, 36))],
 		[95, func() -> void: _shot("running")],
-		[100, func() -> void: sq1.order_move(Vector3(-40, 0, 58), Unit.Order.SNEAK)],
+		[100, func() -> void:
+			sq1.order_move(Vector3(-40, 0, 58))
+			_force_pace(sq1, Unit.Pace.SNEAK)],
 		[150, func() -> void:
 			cam.focus_now(sq1.position)
 			_shot("sneaking")],
@@ -122,29 +122,24 @@ func _fpv_demo() -> void:
 	]
 
 
-## Long-press menu, then choosing a Defend facing on the ring, then the resulting arc.
+## The two-tap control scheme: a move order with its path ribbon, then the guard arc
+## the squad settles into on arrival.
 func _orders_demo() -> void:
 	var sq := _unit("1st Squad")
 	var ctl: InputController = get_parent().get_node("InputController")
-	var hud: Hud = get_parent().get_node("Hud")
 	_events = [
 		[5, func() -> void:
 			battle.start_battle()
-			Game.paused = true
 			cam.zoom = 30.0
 			cam.focus_now(sq.position)],
 		[20, func() -> void:
 			ctl.select(sq)
-			hud.show_menu(sq, cam.cam.unproject_position(sq.position))],
-		[40, func() -> void: _shot("menu")],
-		[42, func() -> void:
-			hud.hide_menu()
-			ctl.set_mode("defend")
-			ctl.set("_orient_dir", Vector3(0.7, 0, -0.7).normalized())],
-		[60, func() -> void: _shot("defend_ring")],
-		[62, func() -> void: ctl.call("_apply_orient")],
-		[90, func() -> void: _shot("defend_arc")],
-		[92, func() -> void: get_tree().quit()],
+			sq.order_move(sq.position + Vector3(10.0, 0.0, 14.0))],
+		[40, func() -> void: _shot("move_ribbon")],
+		[300, func() -> void:
+			cam.focus_now(sq.position)
+			_shot("guard_arc")],
+		[302, func() -> void: get_tree().quit()],
 	]
 
 
@@ -173,7 +168,7 @@ func _rescue_demo() -> void:
 			for u in battle.units:
 				battle.mark_seen(u, Game.UA)
 				battle.mark_seen(u, Game.RU)
-			ru.order_move(Vector3(-56, 0, -24), Unit.Order.MOVE)
+			ru.order_move(Vector3(-56, 0, -24))
 			cam.zoom = 26.0
 			cam.focus_now(Vector3(-56, 0, -16))],
 		[480, func() -> void: _shot("firefight_a")],
@@ -193,15 +188,20 @@ func _gait_demo() -> void:
 		[5, func() -> void:
 			battle.start_battle()
 			cam.zoom = 9.0
-			sq.order_move(sq.position + Vector3(2.0, 0.0, 30.0), Unit.Order.MOVE)],
+			sq.order_move(sq.position + Vector3(2.0, 0.0, 30.0))
+			_force_pace(sq, Unit.Pace.WALK)],
 		[80, func() -> void: shot_walk.call("walk_1")],
 		[86, func() -> void: shot_walk.call("walk_2")],
 		[92, func() -> void: shot_walk.call("walk_3")],
 		[98, func() -> void: shot_walk.call("walk_4")],
-		[110, func() -> void: sq.order_move(sq.position + Vector3(0.0, 0.0, 25.0), Unit.Order.FAST)],
+		[110, func() -> void:
+			sq.order_move(sq.position + Vector3(0.0, 0.0, 25.0))
+			_force_pace(sq, Unit.Pace.RUN)],
 		[150, func() -> void: shot_walk.call("run_1")],
 		[155, func() -> void: shot_walk.call("run_2")],
-		[165, func() -> void: sq.order_move(sq.position + Vector3(12.0, 0.0, 0.0), Unit.Order.SNEAK)],
+		[165, func() -> void:
+			sq.order_move(sq.position + Vector3(12.0, 0.0, 0.0))
+			_force_pace(sq, Unit.Pace.SNEAK)],
 		[230, func() -> void: shot_walk.call("sneak_1")],
 		[236, func() -> void: shot_walk.call("sneak_2")],
 		[250, func() -> void: sq.order_stop()],
@@ -210,41 +210,10 @@ func _gait_demo() -> void:
 	]
 
 
-## Holds a simulated finger on a unit, verifies the menu opens, then runs MOVE.
-func _menu_test() -> void:
-	var sq := _unit("1st Squad")
-	var ctl: InputController = get_parent().get_node("InputController")
-	var hud: Hud = get_parent().get_node("Hud")
-	var at := []
-	_events = [
-		[5, func() -> void:
-			battle.start_battle()
-			cam.zoom = 30.0
-			cam.focus_now(sq.members[0].position)],
-		[20, func() -> void:
-			at.append(cam.cam.unproject_position(sq.members[0].position))
-			ctl._press_begin(900, at[0])],
-		[45, func() -> void:
-			ctl._press_end(900, at[0] + Vector2(11.0, -8.0))
-			print("menu visible: ", hud.get("_menu").visible, " selected: ", ctl.selected.display_name if ctl.selected else "none")],
-		[50, func() -> void:
-			_shot("menu_open")
-			var list: VBoxContainer = hud.get("_menu_list")
-			for ch in list.get_children():
-				if ch is Button:
-					print("entry: ", (ch as Button).text, " rect: ", (ch as Control).get_global_rect())
-			var move: Button = list.get_child(1)
-			print("pressing ", move.text)
-			move.pressed.emit()],
-		[53, func() -> void:
-			print("mode after press: '", ctl.mode, "' menu visible: ", hud.get("_menu").visible)
-			ctl._press_begin(900, cam.cam.unproject_position(sq.position + Vector3(6, 0, 6)))],
-		[55, func() -> void:
-			ctl._press_end(900, cam.cam.unproject_position(sq.position + Vector3(6, 0, 6)))],
-		[58, func() -> void:
-			print("after target tap: order=", sq.order, " arrived=", sq.arrived)
-			get_tree().quit()],
-	]
+## Pins the squad's pace for a visual check; the autonomy would otherwise re-pick it.
+static func _force_pace(u: Unit, p: int) -> void:
+	u.pace = p
+	u.pace_lock = 1e9
 
 
 var _models: Array[Soldier] = []

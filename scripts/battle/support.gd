@@ -44,7 +44,6 @@ func call_mortar(p: Vector3) -> bool:
 	if mortar_left <= 0:
 		return false
 	mortar_left -= 1
-	battle.notify_msg("82mm mortar: rounds in %ds" % int(MORTAR_DELAY), Color(0.7, 0.85, 1.0))
 	for i in 6:
 		battle.schedule(MORTAR_DELAY + i * 0.9, func() -> void: _shell(p, 9.0, 6.5, 0.55, 40.0, 25.0, 60.0))
 	return true
@@ -58,7 +57,6 @@ func launch_recon(p: Vector3) -> bool:
 	var d := Drone.new()
 	battle.add_drone(d)
 	d.setup_recon(battle, Game.UA, team.position, p, 25.0)
-	battle.notify_msg("Recon drone launched", Color(0.7, 0.85, 1.0))
 	return true
 
 
@@ -71,7 +69,6 @@ func launch_fpv(t: Unit) -> bool:
 	var d := Drone.new()
 	battle.add_drone(d)
 	d.setup_fpv(battle, Game.UA, team.position, t)
-	battle.notify_msg("FPV away → %s" % ("Enemy " + String(t.def["name"]) if t.is_vehicle else "enemy infantry"), Color(0.7, 0.85, 1.0))
 	return true
 
 
@@ -104,7 +101,6 @@ func sim(_dt: float) -> void:
 
 ## Opening barrage on the Ukrainian treeline. Trenches make it survivable.
 func _prep_barrage() -> void:
-	battle.notify_msg("Incoming artillery! Stay in the trenches.", Color(1.0, 0.4, 0.3))
 	for i in 10:
 		battle.schedule(3.0 + i * 1.4 + randf() * 0.5, func() -> void:
 			_shell(Vector3(randf_range(-80.0, 70.0), 0.0, randf_range(14.0, 32.0)), 0.0, 7.0, 0.45, 35.0, 40.0, 160.0))
@@ -138,7 +134,6 @@ func _ru_fpv() -> void:
 	var d := Drone.new()
 	battle.add_drone(d)
 	d.setup_fpv(battle, Game.RU, Vector3(best.position.x + randf_range(-30.0, 30.0), 0.0, -BattleMap.HALF + 2.0), best)
-	battle.notify_msg("FPV drone inbound → %s! Move or get into cover." % best.display_name, Color(1.0, 0.4, 0.3))
 
 
 func _ru_artillery() -> void:
@@ -146,7 +141,6 @@ func _ru_artillery() -> void:
 	if targets.is_empty():
 		return
 	var aim: Vector3 = targets.pick_random().known_pos[Game.RU]
-	battle.notify_msg("Artillery incoming near %s!" % _nearest_vl_name(aim), Color(1.0, 0.4, 0.3))
 	for i in 6:
 		battle.schedule(8.0 + i * 1.3, func() -> void: _shell(aim, 15.0, 7.0, 0.5, 40.0, 40.0, 160.0))
 
@@ -156,14 +150,3 @@ func _ru_recon() -> void:
 	var d := Drone.new()
 	battle.add_drone(d)
 	d.setup_recon(battle, Game.RU, Vector3(aim.x, 0.0, -BattleMap.HALF + 2.0), aim, 20.0)
-
-
-func _nearest_vl_name(p: Vector3) -> String:
-	var best := "your lines"
-	var best_d := 60.0
-	for vl in battle.vls:
-		var d := vl.position.distance_to(p)
-		if d < best_d:
-			best_d = d
-			best = vl.loc_name
-	return best

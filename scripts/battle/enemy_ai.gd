@@ -56,10 +56,8 @@ func _spawn(w: Dictionary) -> void:
 			mode = "overwatch_hold" if u.is_vehicle else "hold"
 		u.ai = {"route": w["route"], "i": 0, "mode": mode, "timer": 0.0, "lost": 0, "push_until": 0.0, "home": origin + off, "off": off}
 		if hold and not u.is_vehicle:
-			u.order_defend(Vector3(0, 0, 1))
+			u.hold_position(Vector3(0, 0, 1))
 		spawned.append(u)
-	if w.has("msg"):
-		battle.notify_msg(w["msg"], Color(1.0, 0.65, 0.45))
 
 
 func _nearest_enemy(u: Unit) -> Unit:
@@ -115,9 +113,9 @@ func _decide_infantry(u: Unit, enemy: Unit, enemy_d: float) -> void:
 				ai["i"] = i
 				if i >= route.size():
 					ai["mode"] = "hold"
-					u.order_defend()
+					u.hold_position()
 				else:
-					u.order_move(_waypoint(u, i), Unit.Order.FAST if enemy_d > 170.0 else Unit.Order.MOVE)
+					u.order_move(_waypoint(u, i))
 		"engage":
 			ai["timer"] = float(ai["timer"]) - THINK_INTERVAL
 			if enemy == null:
@@ -137,15 +135,15 @@ func _decide_infantry(u: Unit, enemy: Unit, enemy_d: float) -> void:
 				ai["mode"] = "engage" if enemy != null else "advance"
 				ai["timer"] = randf_range(5.0, 9.0)
 		"hold":
-			if u.order != Unit.Order.DEFEND and u.arrived:
-				u.order_defend()
+			if u.arrived and not u.guarding:
+				u.hold_position()
 
 
 ## Short rush towards goal, ending in the best cover near the landing point.
 func _bound(u: Unit, goal: Vector3) -> void:
 	var dir := Vector3(goal.x - u.position.x, 0.0, goal.z - u.position.z)
 	var hop := u.position + dir.normalized() * minf(25.0, dir.length())
-	u.order_move(battle.map.best_cover_near(hop, 4, {}), Unit.Order.FAST)
+	u.order_move(battle.map.best_cover_near(hop, 4, {}))
 
 
 func _decide_vehicle(u: VehicleUnit, enemy: Unit, enemy_d: float) -> void:
@@ -154,7 +152,7 @@ func _decide_vehicle(u: VehicleUnit, enemy: Unit, enemy_d: float) -> void:
 	var i: int = ai["i"]
 	if u.gun_out and String(ai["mode"]) != "retreat":
 		ai["mode"] = "retreat"
-		u.order_move(ai["home"], Unit.Order.FAST)
+		u.order_move(ai["home"])
 		return
 	match String(ai["mode"]):
 		"advance":
@@ -172,7 +170,7 @@ func _decide_vehicle(u: VehicleUnit, enemy: Unit, enemy_d: float) -> void:
 				if i > last:
 					ai["mode"] = "overwatch_hold"
 				else:
-					u.order_move(_waypoint(u, i), Unit.Order.MOVE)
+					u.order_move(_waypoint(u, i))
 		"overwatch":
 			ai["timer"] = float(ai["timer"]) - THINK_INTERVAL
 			if float(ai["timer"]) <= 0.0:

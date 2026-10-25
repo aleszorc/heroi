@@ -138,6 +138,9 @@ func _commit(aim: Vector3) -> void:
 		var t := battle.map.type_at(target.position)
 		if t == BattleMap.T.BUILDING or t == BattleMap.T.TRENCH:
 			p = 0.55
+		elif not target.arrived:
+			# A squad scrambling (on its own or on an order) is harder to hit.
+			p = 0.65
 	elif not target.arrived:
 		p = 0.7
 	_will_hit = randf() < p
@@ -169,7 +172,6 @@ func _ground_fire() -> void:
 			chance += 0.025 * u.alive_count()
 	if randf() < minf(chance, 0.35):
 		battle.fx.explosion(position, 0.5)
-		battle.notify_msg("FPV drone shot down!" if side == Game.RU else "Our FPV was shot down", Color(0.75, 0.9, 1.0))
 		_finish()
 
 

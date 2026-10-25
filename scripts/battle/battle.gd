@@ -211,8 +211,6 @@ func _grenade_alarm(at: Vector3) -> void:
 			if s.alive and away.length() < 7.0 and randf() < 0.75:
 				var dir := away if away.length() > 0.3 else Vector3(randf_range(-1, 1), 0.0, randf_range(-1, 1))
 				schedule(randf_range(0.15, 0.6), func() -> void: s.dive(dir))
-			if s.alive and away.length() < 7.0 and u.side == Game.UA:
-				notify(u, "Grenade!", true)
 
 
 func on_died_of_wounds(u: Unit) -> void:
@@ -260,6 +258,10 @@ func start_battle() -> void:
 	phase = Phase.BATTLE
 	Game.paused = false
 	_deploy_mesh.visible = false
+	# Deployed units settle in on their own: guard facing the enemy, hidden ones in ambush.
+	for u in units:
+		if u.side == Game.UA:
+			u.hold_position()
 	var kind := String(mission.get("kind", "defend"))
 	var go := "Take the objectives." if kind == "assault" else ("Reach the objectives first." if kind == "meeting" else "Hold the line.")
 	notify_msg("Battle started. %s" % go, Color(0.85, 0.92, 1.0))
@@ -379,8 +381,6 @@ func _spot(target: Unit) -> void:
 
 
 func mark_seen(u: Unit, obs: int) -> void:
-	if obs == Game.UA and not u.ever_seen[obs] and u.is_vehicle:
-		notify_msg("Contact: %s spotted!" % String(u.def["name"]), Color(1.0, 0.7, 0.4))
 	u.last_seen[obs] = time
 	u.known_pos[obs] = u.position
 	u.ever_seen[obs] = true
@@ -447,20 +447,7 @@ func pick_unit(p: Vector3, side: int, need_seen: bool) -> Unit:
 	return best
 
 
-# --- Events and messages ---
-
-func notify(u: Unit, text: String, urgent: bool) -> void:
-	if u.side == Game.UA:
-		message.emit(text, Color(1.0, 0.45, 0.35) if urgent else Color(1.0, 0.8, 0.45))
-
-
-## Message about any unit; enemy news shows in green because it is good for the player.
-func notify_any(u: Unit, text: String) -> void:
-	if u.side == Game.UA:
-		message.emit(text, Color(1.0, 0.55, 0.4))
-	elif u.ever_seen[Game.UA]:
-		message.emit(text, Color(0.6, 0.95, 0.55))
-
+# --- Events and messages (outcomes only: objectives, losses, battle start and end) ---
 
 func notify_msg(text: String, color: Color) -> void:
 	message.emit(text, color)

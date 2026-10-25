@@ -1,16 +1,20 @@
 class_name Unit
 extends Node3D
 ## Base for anything that takes orders: infantry squads, teams and vehicles.
-## Holds orders, morale, suppression and spotting state; subclasses move and shoot.
+## The player and the AI give only destinations and targets; the unit itself picks
+## its pace, its facing, when to hold fire and when to shift cover.
 
-enum Order { NONE, MOVE, FAST, SNEAK, DEFEND, AMBUSH }
+## How a unit moves; chosen by the unit from the situation, never by the player.
+enum Pace { WALK, RUN, SNEAK }
 
-## Ambushers hold fire until an enemy comes this close (vehicles: AMBUSH_RANGE_VEHICLE),
-## or until they are fired on.
+## A unit holding fire stays hidden until an enemy comes this close
+## (vehicles: AMBUSH_RANGE_VEHICLE), or until it is fired on.
 const AMBUSH_RANGE := 60.0
 const AMBUSH_RANGE_VEHICLE := 150.0
-## Half-width of the fire arc shown for Defend and Ambush.
+## Half-width of the guard fire arc.
 const GUARD_ARC := PI / 4.0
+## A known enemy within this range counts as contact for pace selection.
+const CONTACT_RANGE := 200.0
 enum State { OK, SUPPRESSED, PINNED, PANICKED, ROUTED, DESTROYED }
 
 const STATE_NAMES: Array[String] = ["Ready", "Suppressed", "Pinned", "Panicked", "Routed", "Lost"]
@@ -24,16 +28,20 @@ var def: Dictionary = {}
 var display_name := ""
 var is_vehicle := false
 
-var order := Order.NONE
+var pace := Pace.WALK
+## Earliest sim time the pace may be re-picked (autonomous dashes lock the sprint in).
+var pace_lock := 0.0
+## Holding ground facing guard_dir; set automatically on arrival.
+var guarding := true
+## Concealed and unseen: hold fire until an enemy is in AMBUSH_RANGE or fires first.
+var hold_fire := false
 var path := PackedVector3Array()
 var path_i := 0
 var arrived := true
 ## Yaw in radians; 0 faces -Z (north, towards the enemy).
 var heading := 0.0
 var fire_target: Unit = null
-var fire_point := Vector3.ZERO
-var area_fire := false
-## Facing chosen for Defend / Ambush (zero when not guarding).
+## Facing being guarded (zero until first set).
 var guard_dir := Vector3.ZERO
 
 var suppression := 0.0
@@ -62,7 +70,6 @@ var removed := false
 var _label: Label3D
 var _ghost: Label3D
 var _label_tick := 0.0
-var _pinned_msg_at := -99.0
 
 
 func setup(b: Battle, id: String, s: int, pos: Vector3, unit_name: String) -> void:
@@ -76,6 +83,7 @@ func setup(b: Battle, id: String, s: int, pos: Vector3, unit_name: String) -> vo
 	morale = def.get("morale", 70.0)
 	smoke_left = def.get("smoke", 0)
 	heading = PI if side == Game.RU else 0.0
+	guard_dir = forward()
 	position = Vector3(pos.x, map.height_at(pos), pos.z)
 	_build()
 	_build_markers()
@@ -210,22 +218,22 @@ func conceal_value() -> float:
 	var t := battle.time
 	if t - last_moved > 3.0:
 		c = minf(0.92, c + 0.12)
-	elif order == Order.FAST:
+	elif pace == Pace.RUN:
 		c *= 0.5
-	elif order == Order.SNEAK:
+	elif pace == Pace.SNEAK:
 		c = minf(0.92, c + 0.1)
 	if t - last_fired < 3.0:
 		c *= 0.35
-	elif order == Order.AMBUSH:
+	elif hold_fire:
 		c = minf(0.95, c + 0.15)
 	return c
 
 
 # --- State queries ---
 
-## Holding a position facing a chosen direction (Defend or Ambush).
+## Holding a position facing guard_dir.
 func is_guarding() -> bool:
-	return order == Order.DEFEND or order == Order.AMBUSH
+	return arrived and guarding
 
 func is_targetable() -> bool:
 	return not removed and state != State.DESTROYED and alive_count() > 0
@@ -248,24 +256,25 @@ static func yaw_to(v: Vector3) -> float:
 	return atan2(-v.x, -v.z)
 
 
-# --- Orders ---
+# --- Orders (only destinations and targets come from outside) ---
 
-func order_move(target: Vector3, mode: int) -> bool:
+func order_move(target: Vector3) -> bool:
 	if not can_move():
 		return false
-	return _set_path(target, mode)
+	return _set_path(target)
 
 
-func _set_path(target: Vector3, mode: int) -> bool:
+func _set_path(target: Vector3) -> bool:
 	var p := map.find_path(position, target, is_vehicle)
 	if p.is_empty():
 		return false
 	path = p
 	path_i = 0
-	order = mode
 	arrived = false
-	area_fire = false
-	if mode == Order.FAST:
+	guarding = false
+	hold_fire = false
+	pace = _choose_pace()
+	if pace == Pace.RUN:
 		fire_target = null
 	_on_path_set(target)
 	return true
@@ -276,39 +285,35 @@ func order_fire(t: Unit) -> void:
 		return
 	_halt()
 	fire_target = t
-	area_fire = false
+	hold_fire = false
 
 
-func order_area_fire(p: Vector3) -> void:
+## Hold here facing `dir` (default: towards the threat).
+func hold_position(dir := Vector3.ZERO) -> void:
 	if not is_targetable():
 		return
 	_halt()
-	fire_point = p
-	area_fire = true
 	fire_target = null
-
-
-## Hold here facing `dir` (default: straight ahead). Ambush also holds fire and hides
-## until the enemy walks into it.
-func order_defend(dir := Vector3.ZERO, ambush := false) -> void:
-	if not is_targetable():
-		return
-	_halt()
-	order = Order.AMBUSH if ambush else Order.DEFEND
-	dir.y = 0.0
-	guard_dir = dir.normalized() if dir.length() > 0.1 else forward()
-	if not is_vehicle:
-		heading = yaw_to(guard_dir)
-	fire_target = null
-	area_fire = false
-	_take_cover()
+	_guard(dir)
 
 
 func order_stop() -> void:
 	_halt()
-	order = Order.NONE
 	fire_target = null
-	area_fire = false
+
+
+## Settle into a guard facing: cover against it. Settling concealed and unseen with
+## the enemy already close is an ambush: hold fire until they walk into it. With no
+## enemy near there is nothing to spring, so the unit fires at will at full range.
+func _guard(dir := Vector3.ZERO) -> void:
+	guarding = true
+	dir.y = 0.0
+	guard_dir = dir.normalized() if dir.length() > 0.1 else _threat_dir()
+	if not is_vehicle:
+		heading = yaw_to(guard_dir)
+	hold_fire = fire_target == null and not seen[1 - side] and conceal_value() >= 0.5 \
+			and known_enemy_distance() < CONTACT_RANGE
+	_take_cover()
 
 
 func _halt() -> void:
@@ -316,8 +321,6 @@ func _halt() -> void:
 	path = PackedVector3Array()
 	path_i = 0
 	arrived = true
-	if not is_guarding():
-		order = Order.NONE
 	if was_moving:
 		_take_cover()
 
@@ -331,10 +334,51 @@ func _reach_end() -> void:
 		_set_body_visible(false)
 		battle.on_unit_lost(self)
 		return
-	if not is_guarding():
-		order = Order.NONE
-	_take_cover()
+	_guard()
 	_on_arrived()
+
+
+# --- Autonomy helpers ---
+
+## Picks how to move from the situation; re-checked while moving (see pace_lock).
+func _choose_pace() -> int:
+	if state >= State.PANICKED:
+		return Pace.RUN
+	return Pace.RUN if known_enemy_distance() > CONTACT_RANGE else Pace.WALK
+
+
+## Distance to the nearest recently-seen enemy, INF with no contact.
+func known_enemy_distance() -> float:
+	var best := INF
+	for u in battle.units:
+		if u.side == side or not u.is_targetable() or battle.time - u.last_seen[side] > 20.0:
+			continue
+		best = minf(best, u.known_pos[side].distance_to(position))
+	return best
+
+
+## Direction danger comes from: the nearest known enemy, or the enemy map edge.
+func _threat_dir() -> Vector3:
+	var best := INF
+	var dir := Vector3(0.0, 0.0, -1.0 if side == Game.UA else 1.0)
+	for u in battle.units:
+		if u.side == side or not u.is_targetable() or battle.time - u.last_seen[side] > 20.0:
+			continue
+		var d := u.known_pos[side].distance_to(position)
+		var to := Vector3(u.known_pos[side].x - position.x, 0.0, u.known_pos[side].z - position.z)
+		if d < best and to.length() > 0.5:
+			best = d
+			dir = to.normalized()
+	return dir
+
+
+## The enemy FPV currently hunting this unit, close enough that dodging matters.
+func incoming_fpv() -> Drone:
+	for d in battle.drones:
+		if d.fpv and d.side != side and not d.done and d.target == self \
+				and Vector2(d.position.x - position.x, d.position.z - position.z).length() < 90.0:
+			return d
+	return null
 
 
 # --- Morale ---
@@ -380,9 +424,6 @@ func _update_morale(dt: float) -> void:
 		state = State.OK
 	if state == State.PINNED and prev < State.PINNED:
 		_take_cover()
-		if battle.time - _pinned_msg_at > 25.0:
-			_pinned_msg_at = battle.time
-			battle.notify(self, "%s is pinned down" % display_name, false)
 	elif state == State.OK and prev >= State.PINNED:
 		_on_recovered()
 
@@ -392,27 +433,22 @@ func _panic() -> void:
 	panic_time = randf_range(7.0, 12.0)
 	morale_hit(3.0)
 	fire_target = null
-	area_fire = false
 	# In good cover men cower where they are; caught in the open they run for the rear.
 	if cover_here() >= 0.4:
 		_halt()
-		battle.notify(self, "%s is cowering!" % display_name, true)
 		return
 	var dest := map.best_cover_near(position + _retreat_dir() * 22.0, 4, {})
-	_set_path(dest, Order.FAST)
-	battle.notify(self, "%s panics and falls back!" % display_name, true)
+	_set_path(dest)
 
 
 func _rout() -> void:
 	state = State.ROUTED
 	fire_target = null
-	area_fire = false
 	var edge := Vector3(position.x, 0.0, (BattleMap.HALF - 2.0) * (1.0 if side == Game.UA else -1.0))
-	if not _set_path(edge, Order.FAST):
+	if not _set_path(edge):
 		removed = true
 		_set_body_visible(false)
 		battle.on_unit_lost(self)
-	battle.notify(self, "%s is routing!" % display_name, true)
 
 
 func _retreat_dir() -> Vector3:
@@ -424,6 +460,9 @@ func _retreat_dir() -> Vector3:
 func sim(dt: float) -> void:
 	if removed or state == State.DESTROYED:
 		return
+	# A hidden ambusher that has been spotted gains nothing by waiting.
+	if hold_fire and seen[1 - side]:
+		hold_fire = false
 	_update_morale(dt)
 	if removed:
 		return
@@ -451,10 +490,8 @@ func pick_target(w: Dictionary, from: Vector3) -> Unit:
 	if fire_target != null and _valid_target(fire_target, w, from):
 		return fire_target
 	var rng: float = w["range"]
-	var ambushing := order == Order.AMBUSH and since_suppressed > 3.0
-	if ambushing:
-		rng = minf(rng, AMBUSH_RANGE_VEHICLE if is_vehicle else AMBUSH_RANGE)
-	elif order == Order.SNEAK and not arrived:
+	var holding := hold_fire and since_suppressed > 3.0
+	if pace == Pace.SNEAK and not arrived:
 		rng = minf(rng, 40.0)
 	var at_only: bool = w.get("at_only", false)
 	var pen: float = w["pen"]
@@ -466,6 +503,9 @@ func pick_target(w: Dictionary, from: Vector3) -> Unit:
 			continue
 		var d := from.distance_to(u.position)
 		if d > rng:
+			continue
+		# An ambusher lets infantry walk in close but takes a vehicle at longer range.
+		if holding and d > (AMBUSH_RANGE_VEHICLE if u.is_vehicle else AMBUSH_RANGE):
 			continue
 		var score := d
 		# Defenders prefer targets inside their arc.
@@ -490,10 +530,9 @@ func pick_target(w: Dictionary, from: Vector3) -> Unit:
 		if score < best_score:
 			best_score = score
 			best = u
-	if best != null and order == Order.AMBUSH:
-		# Sprung: from here on they fight as defenders.
-		order = Order.DEFEND
-		battle.notify(self, "%s springs the ambush!" % display_name, false)
+	if best != null:
+		# Springing the ambush: from here on it fights in the open.
+		hold_fire = false
 	return best
 
 

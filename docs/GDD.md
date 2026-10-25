@@ -29,7 +29,7 @@ Campaign map ─► Briefing & deployment ─► Battle (real-time, pausable) �
      └──── replace losses, spend requisition, promote veterans ◄───────────┘
 ```
 
-- **Battle loop (seconds):** spot, then decide (hold, move, fire, smoke, support), then watch suppression and morale play out, then react.
+- **Battle loop (seconds):** spot, then decide (where to send units, what to attack, when to call support), then watch suppression and morale play out, then react. The units handle their own tactics.
 - **Campaign loop (minutes):** an operation is a chain of 5–8 battles on linked maps. Casualties, veterancy and ammunition carry over. Holding or losing a map changes the next battle's start line.
 
 ---
@@ -83,19 +83,18 @@ Infantry units are squads and teams of individual soldiers, each with one weapon
 | T-72B3 | Heavy front armour (600), weak sides (110); cope cage defeats 40% of drone hits |
 | Off-map | Opening barrage, counter-battery-style strikes on spotted positions, FPV drones, "Orlan" recon passes |
 
-### 3.3 Orders (touch)
-| Order | Effect |
-|---|---|
-| **Move** (tap ground) | Walk at 2.2 m/s and fire at half accuracy |
-| **Fast** (double-tap) | Run at 4 m/s, no firing, easy to spot |
-| **Sneak** | Crawl at 1 m/s, +10% concealment, only fires at under 40 m |
-| **Fire** (tap enemy) | Halt and engage that target. Tap ground for suppressive area fire on unseen enemies |
-| **Defend** | Every unit. After choosing it, drag or tap on the ring around the unit to set its facing; the fire arc (±45°) is drawn. Men take cover against that direction and prefer targets inside the arc; vehicles pivot their front armour to it |
-| **Smoke** | Throw a smoke screen within 40 m (limited) |
-| **Ambush** | Like Defend, but hidden (+15% concealment) and holding fire until an enemy is within 60 m (150 m for vehicles) or the unit is fired on; then it springs and fights as Defend |
-| **Stop** | Cancel everything |
+### 3.3 Commands and autonomy (touch)
+Two orders only: **tap ground = move there**, **tap a spotted enemy = attack it**. There is no order menu and no order modes; every other tactical decision is the unit's own, re-checked against the situation twice a second:
 
-Vehicles reverse automatically on short moves to the rear, keeping their front armour towards the enemy. TOW and Stugna fire only when stationary.
+| Decision | What the unit does on its own |
+|---|---|
+| **Pace** | Runs (4 m/s, no firing, easy to spot) when no known enemy is within 200 m; walks and bounds by fire teams (2.2 m/s, fires at half accuracy) in contact; creeps (1 m/s, +10% concealment, fires only under 40 m) when closing on a known enemy within 80 m while still unseen |
+| **Guard** | On arriving anywhere it settles in facing the threat (nearest known enemy, else the enemy map edge): men take cover against that direction and prefer targets inside the ±45° arc; vehicles pivot their front armour to it |
+| **Hold fire** | If it settles concealed and unseen it waits in ambush (+15% concealment) until an enemy is within 60 m (150 m for vehicles) or it is fired on, then springs |
+| **Smoke** | A squad pinned in the open pops a smoke screen towards the shooter (limited, 30 s between throws) |
+| **Reposition** | Local only: it scrambles to cover away from an FPV homing in on it, and shifts a few metres to better cover under sustained fire — it never abandons the area it was sent to |
+
+Vehicles reverse automatically on short moves to the rear, keeping their front armour towards the enemy. TOW and Stugna fire only when stationary. An explicit attack tap overrides target choice and breaks hold-fire.
 
 ### 3.4 Spotting
 - Each unit is re-checked several times a second against every enemy observer within 260 m.
@@ -126,7 +125,7 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
   - Men keep 1.1 m apart (more when prone) and slide along walls. No man ever crosses an intact-wall cell — not steering to a slot, diving for cover, being dragged, or thrown by a blast: every per-soldier step goes through one wall gate, so buildings are entered only through doors, breaches or window climbs (window climbs cap a man at 40% speed). Cover search never offers a spot on the far side of an intact wall.
 - **Stance rules** (each man decides from his own position, relative to the nearest known threat):
   - **Trench, building or rubble, or behind a wall or wreck:** he ducks and only rises when he has a target. A ducked man must be up before he can fire.
-  - **Open ground**, or when suppressed or on Defend: he goes prone.
+  - **Open ground**, or when suppressed or guarding: he goes prone.
   - **Trees or gully:** he kneels.
   - **Moving while suppressed:** he crawls.
   - **Panicked:** he cowers in place.
@@ -228,8 +227,8 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 ### 3.7 Drones
 - **Recon (player):** tap an area. Orbits for 25 s, 45 s cooldown.
 - **FPV drone model:** racing X-frame kamikaze quad — carbon plate, four arms with two-blade props, strapped lipo on top, tilted nose camera, whip antennas, RPG warhead slung underneath. The recon drone keeps a commercial quadcopter look.
-- **FPV (player):** 4 per battle, 12 s cooldown. Tap a spotted enemy. 80% hit (55% vs trench or building, 70% vs moving vehicle). Top attack with 350 penetration, plus 4 m blast.
-- **Enemy FPVs:** every 40–60 s against a recently spotted unit (priority: vehicles, then ATGM and MG teams, then targets in the open). You get a warning message and a **FPV!** marker, roughly 5 s to react. Infantry within 35 m can shoot it down.
+- **FPV (player):** 4 per battle, 12 s cooldown. Tap a spotted enemy. 80% hit (55% vs trench or building, 70% vs moving vehicle, 65% vs moving infantry). Top attack with 350 penetration, plus 4 m blast.
+- **Enemy FPVs:** every 40–60 s against a recently spotted unit (priority: vehicles, then ATGM and MG teams, then targets in the open). A **FPV!** marker appears over the hunted unit, which scrambles for cover on its own; moving and cover reduce the hit chance. Infantry within 35 m can shoot it down.
 - No drone team means no drones. Protecting the operators matters.
 
 ### 3.7b Scenarios (procedural)
@@ -249,19 +248,17 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 
 ## 4. Controls and UI (landscape phone)
 
-- **One finger:** tap to select or order, drag to pan. **Hold** a unit to open its command menu (Move, Fast, Sneak, Fire, Smoke, Defend, Ambush, Stop) at your finger — the only order UI; there is no bottom order bar. The hold is tracked in frame time (pause-safe) and tolerates 30 px of finger drift before it becomes a camera pan. On desktop the mouse is handled directly, not through touch emulation. **Two fingers:** pinch to zoom, drag to pan. **Buttons:** rotate the view in 90° steps.
-- **Selection:** a selected unit shows its name in yellow (no ground ring). Defend/Ambush facing is picked on a ring and shown as a translucent cone only.
+- **One finger:** tap a friendly unit to select it; with a unit selected, tap ground to move and tap a spotted enemy to attack — the only two orders. Drag to pan. There is no order menu, no order bar and no long-press. On desktop the mouse is handled directly, not through touch emulation. **Two fingers:** pinch to zoom, drag to pan. **Buttons:** rotate the view in 90° steps.
+- **Selection:** a selected unit shows its name in yellow (no ground ring), its move path as a ribbon, its fire line, and the fire arc it guards as a translucent cone (violet while holding fire, blue otherwise).
 - **Top left:** clock and objectives (blue held, red lost, `!` contested).
 - **Top right:** rotate, speed (1×/2×), pause, quit (× — opens a "Quit battle?" confirm overlay that pauses the sim; QUIT reloads the same map's briefing, KEEP PLAYING restores the previous pause state).
 - **Bottom:** roster cards (name, men alive, state colour). Tap a card to select and centre the camera.
-- **Above roster:** order bar for the selected unit.
-- **Right edge:** support (Mortar, Recon, FPV) with charges and cooldowns.
-- Armed orders show a prompt with Cancel. Events scroll in the message feed (red = bad for you, green = good).
-- **Desktop debug:** mouse acts as touch, wheel zooms, WASD pans, Q/E rotate, Space pauses, Esc backs out one layer (armed order → selection → quit confirm).
+- **Right edge:** support (Mortar, Recon, FPV) with charges and cooldowns; each arms a mode for the next tap, shown as a prompt with Cancel.
+- The message feed carries outcomes only: battle start and end, objectives taken or lost, units destroyed or lost. No advice, warnings or contact reports — the world itself (FX, the FPV! marker, roster state colours) is the feedback.
+- **Desktop debug:** mouse acts as touch, wheel zooms, WASD pans, Q/E rotate, Space pauses, Esc backs out one layer (armed support mode → selection → quit confirm).
 
 Planned:
 - Tree-crown fade around the selected unit.
-- Order wheel on long-press.
 - Haptics on casualties.
 - Left-handed layout.
 - Colour-blind palette for the team discs.
@@ -281,7 +278,7 @@ Planned:
 ## 7. AI
 
 - **Waves:** each wave has a spawn time, a route and an objective.
-- **Infantry:** advance (run when no contact) → engage (halt and fire 5–10 s) → bound (rush ≤25 m to the best cover towards the next waypoint, only if suppression is under 35) → repeat → hold the objective in Defend.
+- **Infantry:** advance (run when no contact) → engage (halt and fire 5–10 s) → bound (rush ≤25 m to the best cover towards the next waypoint, only if suppression is under 35) → repeat → guard the objective. The AI gives the same two inputs as the player — destinations and halts — and the units' own autonomy does the rest.
 - **Vehicles:** advance, then overwatch whenever enemies are within 225 m for 8–14 s, then push for 8 s. They stop one waypoint short of the objective. A vehicle with its weapons knocked out retreats.
 - **Support:** fire director picks only from what the Russian side has actually spotted. The rule is the same as for the player: no cheating vision.
 
@@ -313,7 +310,7 @@ Godot 4.7, GDScript, Mobile renderer. Everything is built in code from `scenes/m
 | `scripts/map/battle_map.gd` | Grid, terrain properties, heights, crater dimple deformation, A* paths, LOS, cover search |
 | `scripts/map/map_view.gd` | Chunked ground mesh with local rebuild, multimesh trees and props, crater mesh registry (merge-grow, no stacking), buildings, wrecks |
 | `scripts/art/mesh_factory.gd` | All procedural models (soldiers, vehicles, trees, houses, drones) |
-| `scripts/units/*.gd` | `Unit` base (orders, morale, spotting state), `InfantryUnit`, `Soldier` (rig, animation, steering), `VehicleUnit` |
+| `scripts/units/*.gd` | `Unit` base (orders, autonomy, morale, spotting state), `InfantryUnit`, `Soldier` (rig, animation, steering), `VehicleUnit` |
 | `scripts/map/building.gd` | Destructible houses: pieces, damage, debris, roof collapse, grid upkeep |
 | `scripts/fx/puffs.gd` | Volumetric puff particle system (smoke, dust, flame) |
 | `scripts/dev/demo.gd` | Scripted visual showcase for screenshots (`-- demo shots=/dir`) |
