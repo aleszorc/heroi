@@ -567,6 +567,9 @@ func steer(dt: float, goal: Vector3, max_speed: float, push: Vector3, map: Battl
 		else:
 			np = position
 			vel = Vector3.ZERO
+	# Nobody walks off the battlefield, whatever the steering wants.
+	np.x = clampf(np.x, -BattleMap.HALF + 0.6, BattleMap.HALF - 0.6)
+	np.z = clampf(np.z, -BattleMap.HALF + 0.6, BattleMap.HALF - 0.6)
 	if (map.type_at(np) == BattleMap.T.TRENCH) != (map.type_at(position) == BattleMap.T.TRENCH) \
 			and Vector2(np.x - position.x, np.z - position.z).length() > 0.001:
 		# Stepping over a trench lip: a quick hop down, or a slower clamber out.

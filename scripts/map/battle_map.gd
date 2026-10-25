@@ -329,15 +329,17 @@ func _build_heights() -> void:
 				# reads from the camera and the revetment wall below it is sheer.
 				h += rng.randf_range(0.22, 0.34)
 			heights[y * (W + 1) + x] = h
-	# Painted shell holes: one dish per CRATER cell; where the painting clusters,
-	# the dishes overlap and deepen toward CRATER_SAT like saturation fire.
+	# Painted shell holes: one shallow dish per CRATER cell; where the painting
+	# clusters, the dishes overlap and deepen toward CRATER_SAT like saturation
+	# fire. Kept subtle — the crater mesh MapView seats in each dish carries the
+	# look, the dent only grounds it.
 	for y in H:
 		for x in W:
 			if cells[y * W + x] != T.CRATER:
 				continue
 			var p := cell_to_world(Vector2i(x, y))
 			var c2 := Vector2(p.x + rng.randf_range(-0.5, 0.5), p.z + rng.randf_range(-0.5, 0.5))
-			_apply_crater(c2, 2.7, 0.26, 0.07, rng)
+			_apply_crater(c2, 2.2, 0.18, 0.04, rng)
 
 
 func corner_height(x: int, y: int) -> float:

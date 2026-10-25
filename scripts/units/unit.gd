@@ -570,7 +570,8 @@ func update_visuals(dt: float) -> void:
 		else:
 			_label.visible = true
 			if side == Game.UA:
-				_label.text = display_name if state == State.OK else "%s\n%s" % [display_name, status_text()]
+				# State shows as label colour only; the full status text lives on the HUD card.
+				_label.text = display_name
 			else:
 				_label.text = String(def["name"]) if is_vehicle else "Infantry"
 	if not _label.visible:

@@ -9,8 +9,6 @@ const BOARD_DEPTH := 2.0
 const CHUNK := 12
 
 ## Crater colouring: charred at the scorched centre, dark wet mud at the lip and rim.
-const SCORCHED := Color(0.085, 0.07, 0.06)
-const DISTURBED := Color(0.20, 0.155, 0.11)
 ## Spoil dirt thrown up around trenches: churned mud fading out over ~2 cells.
 const TRENCH_DIRT := Color(0.24, 0.185, 0.125)
 
@@ -242,25 +240,16 @@ func _build_trench_dirt(map: BattleMap) -> void:
 					_trench_dirt[i] = maxf(_trench_dirt[i], minf(s * j, 1.0))
 
 
-## Base cell colour blended toward crater colouring by how deep this corner was dug:
-## disturbed earth first, grading to scorched char at the deep centre. A rim corner
-## picks up a lighter disturbed-earth cast from the thrown-up spoil.
+## Base cell colour, with trench spoil dirt. Craters leave the ground colour alone:
+## tinting corners smears brown halos across the 2 m quads, so the crater mesh and
+## the heightfield dimple carry the look on their own.
 func _vert_color(base: Color, x: int, y: int) -> Color:
-	var i := y * (BattleMap.W + 1) + x
 	var col := base
+	var i := y * (BattleMap.W + 1) + x
 	if i < _trench_dirt.size():
 		var dirt := _trench_dirt[i]
 		if dirt > 0.0:
 			col = col.lerp(TRENCH_DIRT, dirt * 0.85)
-	var dig: float = _map.crater_depth[i]
-	if dig > 0.0:
-		var t := clampf(dig / 0.3, 0.0, 1.0)
-		col = col.lerp(DISTURBED, minf(t * 2.0, 1.0))
-		if t > 0.5:
-			col = col.lerp(SCORCHED, (t - 0.5) * 2.0)
-	var rim: float = _map.crater_rim[i]
-	if rim > 0.0:
-		col = col.lerp(DISTURBED, clampf(rim / 0.1, 0.0, 1.0) * 0.7)
 	col.a = 1.0
 	return col
 
@@ -356,12 +345,13 @@ func _build_scatter(map: BattleMap) -> void:
 				var q := p + Vector3(0.0, 0.0, -3.0)
 				q.y = map.height_at(q) + 0.02
 				bags.append(Transform3D(Basis(Vector3.UP, rng.randf_range(-0.15, 0.15)), q))
-			elif t == BattleMap.T.CRATER and rng.randf() < 0.45:
-				# Rimmed shell-hole meshes dress the dimpled CRATER cells; where the
+			elif t == BattleMap.T.CRATER:
+				# Every dimpled CRATER cell gets the same crater object runtime blasts
+				# use, so pre-war shelling and fresh hits are one system; where the
 				# painting clusters, the merge rule grows one hole instead of piling
-				# rims on top of each other.
+				# bowls on top of each other.
 				p += Vector3(rng.randf_range(-0.6, 0.6), 0.0, rng.randf_range(-0.6, 0.6))
-				_add_crater(p, rng.randi() % MeshFactory.CRATER_VARIANTS, rng.randf_range(0.55, 0.95), rng)
+				_add_crater(p, rng.randi() % MeshFactory.CRATER_VARIANTS, rng.randf_range(0.7, 1.0), rng)
 	_bush_mm = _multimesh(MeshFactory.bush(), bushes)
 	_bush_xf = bushes
 	_multimesh(MeshFactory.sandbags(), bags)

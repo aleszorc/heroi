@@ -165,6 +165,8 @@ func _sim_move(dt: float) -> void:
 	_yaw_rate = wrapf(heading - prev_heading, -PI, PI) / maxf(dt, 0.0001)
 	if absf(speed_now) > 0.05:
 		position += forward() * speed_now * dt
+		position.x = clampf(position.x, -BattleMap.HALF + 2.0, BattleMap.HALF - 2.0)
+		position.z = clampf(position.z, -BattleMap.HALF + 2.0, BattleMap.HALF - 2.0)
 		last_moved = battle.time
 	_suspension(dt, accel)
 	_aim_turret(dt)
