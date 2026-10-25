@@ -5,9 +5,20 @@ extends Node3D
 func _ready() -> void:
 	_environment()
 	_apply_mission_args()
+	if Game.show_menu:
+		_build_menu()
+		return
 	if Game.next_seed < 0:
 		Game.next_seed = randi() % 1000000
 	var mission := MissionTreeline.build() if Game.next_kind == "treeline" else MissionGen.generate(Game.next_kind, Game.next_seed)
+	# A curated preset dresses the generated mission with its own name and briefing,
+	# but only while the selection still matches it (rerolls fall back to generated
+	# text). The hand-built treeline mission keeps its own briefing.
+	var scen := Game.scenario
+	if not scen.is_empty() and Game.next_kind != "treeline" \
+			and String(scen["kind"]) == Game.next_kind and int(scen["seed"]) == Game.next_seed:
+		mission["title"] = String(scen["name"]).to_upper()
+		mission["briefing"] = String(scen["briefing"])
 	var battle := Battle.new()
 	add_child(battle)
 	battle.setup(mission)
@@ -37,7 +48,9 @@ func _ready() -> void:
 
 
 ## Test hooks: `godot -- kind=assault seed=123` picks the mission on first launch.
-## Applied once, so kind buttons and PLAY AGAIN work across scene reloads.
+## Applied once, so menu choices and PLAY AGAIN work across scene reloads. Any
+## mission/test arg also skips the start menu on that first boot — headless tests,
+## demo and screenshot runs must land straight in the battle as before.
 func _apply_mission_args() -> void:
 	if Game.cli_mission_applied:
 		return
@@ -45,8 +58,29 @@ func _apply_mission_args() -> void:
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("kind="):
 			Game.next_kind = a.substr(5)
+			Game.show_menu = false
 		elif a.begins_with("seed="):
 			Game.next_seed = int(a.substr(5))
+			Game.show_menu = false
+		elif a.begins_with("shots=") or a == "autostart" or a == "demo":
+			Game.show_menu = false
+
+
+## The start menu over a unit-less backdrop: a generated map (fresh one each boot)
+## seen from the usual isometric rig, so the first screen is already the board.
+func _build_menu() -> void:
+	var mission := MissionGen.generate("meeting", randi() % 1000000)
+	var map := BattleMap.new()
+	(mission["paint"] as Callable).call(map)
+	map.finalize()
+	var view := MapView.new()
+	add_child(view)
+	view.build(map, mission)
+	var cam := CameraRig.new()
+	add_child(cam)
+	cam.zoom = 110.0
+	cam.focus_now(Vector3(0.0, 0.0, 10.0))
+	add_child(MainMenu.new())
 
 
 func _environment() -> void:

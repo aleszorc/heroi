@@ -1,8 +1,10 @@
 class_name Hud
 extends CanvasLayer
-## Touch HUD: clock and objectives, pause/speed/rotate, unit roster, support buttons,
-## prompts, deployment briefing and the end screen. There is no order menu: units get
-## only move and attack taps and handle their own tactics.
+## Touch HUD: clock and objectives, speed/rotate, unit roster, support buttons,
+## prompts, the deployment (pre-battle) screen, the options overlay and the end
+## screen. There is no order menu: units get only move and attack taps and handle
+## their own tactics. There is no player-facing pause either; Game.paused is an
+## internal mechanism (deployment, options overlay, end screen).
 
 const PROMPTS := {
 	"mortar": "Tap target for 82mm mortar (6 rounds)",
@@ -20,7 +22,6 @@ var _blockers: Array[Control] = []
 var _clock: Label
 var _vl_labels: Array[Label] = []
 var _msgs: VBoxContainer
-var _pause_btn: Button
 var _speed_btn: Button
 ## Roster cards: unit -> {btn, name, pips: Array[ColorRect], state: Label, strip}.
 var _cards := {}
@@ -28,14 +29,15 @@ var _cards := {}
 var _support := {}
 var _prompt: PanelContainer
 var _prompt_label: Label
-var _setup: PanelContainer
+var _setup: Control
+var _deploy_bar: PanelContainer
 var _end: Control
 var _end_title: Label
 var _end_text: Label
 var _selected_box: StyleBoxFlat
-var _quit: Control
-## Pause state to restore when the quit dialog is cancelled mid-battle.
-var _quit_was_paused := false
+var _opts: Control
+## Pause state to restore when the options overlay closes mid-battle.
+var _opts_was_paused := false
 var _tick := 0.0
 
 
@@ -54,7 +56,7 @@ func setup(b: Battle, c: InputController, camera: CameraRig) -> void:
 	_build_prompt()
 	_build_setup()
 	_build_end()
-	_build_quit()
+	_build_options()
 	battle.message.connect(msg)
 	battle.ended.connect(_on_ended)
 	_refresh()
@@ -166,9 +168,7 @@ func _build_top() -> void:
 	tr.add_child(_button("", func() -> void: cam.rotate_step(1), Vector2(58, 56), "rot_r"))
 	_speed_btn = _button("1×", _cycle_speed, Vector2(58, 56))
 	tr.add_child(_speed_btn)
-	_pause_btn = _button("", toggle_pause, Vector2(58, 56), "pause")
-	tr.add_child(_pause_btn)
-	tr.add_child(_button("", show_quit_confirm, Vector2(58, 56), "cancel"))
+	tr.add_child(_button("", show_options, Vector2(58, 56), "menu"))
 
 	_msgs = VBoxContainer.new()
 	_msgs.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -290,14 +290,24 @@ func _build_prompt() -> void:
 	_prompt.visible = false
 
 
+## The pre-battle flow is two screens: first a modal briefing (map input blocked)
+## whose DEPLOY button hands over to placement, then a slim top bar with the
+## placement hint and the START BATTLE button.
 func _build_setup() -> void:
-	_setup = PanelContainer.new()
+	var dim := ColorRect.new()
+	dim.color = Color(0.0, 0.0, 0.0, 0.45)
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_setup = dim
 	_root.add_child(_setup)
-	_place(_setup, Vector2(0.5, 0), Vector2(0, 84), Control.GROW_DIRECTION_BOTH, Control.GROW_DIRECTION_END)
 	_blockers.append(_setup)
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_setup.add_child(center)
+	var panel := PanelContainer.new()
+	center.add_child(panel)
 	var col := VBoxContainer.new()
 	col.add_theme_constant_override("separation", 8)
-	_setup.add_child(col)
+	panel.add_child(col)
 	var title := Label.new()
 	title.text = String(battle.mission["title"])
 	title.add_theme_font_size_override("font_size", 26)
@@ -309,35 +319,51 @@ func _build_setup() -> void:
 	text.custom_minimum_size.x = 600
 	text.add_theme_font_size_override("font_size", 17)
 	col.add_child(text)
-	var hint := Label.new()
-	hint.text = "Deploy: tap a unit, then tap inside the blue zone."
-	hint.add_theme_color_override("font_color", Color(0.6, 0.8, 1.0))
-	hint.add_theme_font_size_override("font_size", 17)
-	col.add_child(hint)
 	var info := Label.new()
 	info.text = "mission %s  seed %d" % [Game.next_kind, int(battle.mission.get("seed", 0))]
 	info.add_theme_color_override("font_color", Color(0.62, 0.62, 0.55))
 	info.add_theme_font_size_override("font_size", 14)
 	col.add_child(info)
-	var kinds := HBoxContainer.new()
-	kinds.add_theme_constant_override("separation", 6)
-	col.add_child(kinds)
-	for k: String in ["treeline", "defend", "assault", "meeting"]:
-		var kb := _button(k.to_upper(), func() -> void: _restart(k, -1), Vector2(112, 44))
-		kb.add_theme_font_size_override("font_size", 15)
-		if k == Game.next_kind:
-			kb.add_theme_stylebox_override("normal", _selected_box)
-			kb.add_theme_stylebox_override("hover", _selected_box)
-		kinds.add_child(kb)
+	var btns := HBoxContainer.new()
+	btns.add_theme_constant_override("separation", 10)
+	btns.alignment = BoxContainer.ALIGNMENT_END
+	col.add_child(btns)
+	btns.add_child(_button("MENU", _exit_to_menu, Vector2(130, 60), "menu"))
+	var deploy := _button("DEPLOY", func() -> void:
+		_setup.visible = false
+		_deploy_bar.visible = true, Vector2(200, 60), "play")
+	deploy.add_theme_stylebox_override("normal", _primary_box())
+	btns.add_child(deploy)
+	_build_deploy_bar()
+
+
+func _build_deploy_bar() -> void:
+	_deploy_bar = PanelContainer.new()
+	_root.add_child(_deploy_bar)
+	_place(_deploy_bar, Vector2(0.5, 0), Vector2(0, 84), Control.GROW_DIRECTION_BOTH, Control.GROW_DIRECTION_END)
+	_blockers.append(_deploy_bar)
+	var row := HBoxContainer.new()
+	row.add_theme_constant_override("separation", 16)
+	_deploy_bar.add_child(row)
+	var hint := Label.new()
+	hint.text = "Deploy: tap a unit, then tap inside the blue zone."
+	hint.add_theme_color_override("font_color", Color(0.6, 0.8, 1.0))
+	hint.add_theme_font_size_override("font_size", 17)
+	hint.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+	row.add_child(hint)
 	var start := _button("START BATTLE", func() -> void:
 		battle.start_battle()
-		_setup.visible = false
+		_deploy_bar.visible = false
 		on_selection(ctl.selected), Vector2(220, 60), "play")
+	start.add_theme_stylebox_override("normal", _primary_box())
+	row.add_child(start)
+	_deploy_bar.visible = false
+
+
+func _primary_box() -> StyleBoxFlat:
 	var primary := _box(Color(0.22, 0.23, 0.12, 0.97), Color(1.0, 0.88, 0.32))
 	primary.set_border_width_all(2)
-	start.add_theme_stylebox_override("normal", primary)
-	start.size_flags_horizontal = Control.SIZE_SHRINK_END
-	col.add_child(start)
+	return primary
 
 
 func _build_end() -> void:
@@ -362,6 +388,12 @@ func _build_end() -> void:
 	_end_text.custom_minimum_size.x = 460
 	_end_text.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	col.add_child(_end_text)
+	# The kind/seed stays readable here so a good random map can be found again.
+	var info := Label.new()
+	info.text = "mission %s  seed %d" % [Game.next_kind, int(battle.mission.get("seed", 0))]
+	info.add_theme_color_override("font_color", Color(0.62, 0.62, 0.55))
+	info.add_theme_font_size_override("font_size", 14)
+	col.add_child(info)
 	var btns := HBoxContainer.new()
 	btns.add_theme_constant_override("separation", 10)
 	btns.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
@@ -369,6 +401,7 @@ func _build_end() -> void:
 	# PLAY AGAIN replays the exact same map; NEW BATTLE rerolls the same kind.
 	btns.add_child(_button("PLAY AGAIN", func() -> void: _restart(Game.next_kind, int(battle.mission.get("seed", 0))), Vector2(190, 60), "rot_l"))
 	btns.add_child(_button("NEW BATTLE", func() -> void: _restart(Game.next_kind, -1), Vector2(190, 60), "fast"))
+	btns.add_child(_button("MENU", _exit_to_menu, Vector2(140, 60), "menu"))
 	_end.visible = false
 
 
@@ -379,66 +412,63 @@ func _restart(kind: String, mission_seed: int) -> void:
 	get_tree().reload_current_scene()
 
 
-## Confirm overlay for quitting mid-battle; one stray tap must never dump the
-## player back to the briefing, so the top-right quit button only opens this.
-func _build_quit() -> void:
-	_quit = ColorRect.new()
-	(_quit as ColorRect).color = Color(0.0, 0.0, 0.0, 0.55)
-	_quit.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_root.add_child(_quit)
-	_blockers.append(_quit)
+## Reloads the scene into the start menu.
+func _exit_to_menu() -> void:
+	Game.show_menu = true
+	get_tree().reload_current_scene()
+
+
+## Options overlay (the only menu in battle): resume, restart the same scenario,
+## exit to the start menu, quit the app. Opening it pauses the simulation
+## internally; closing restores the pause state it found.
+func _build_options() -> void:
+	_opts = ColorRect.new()
+	(_opts as ColorRect).color = Color(0.0, 0.0, 0.0, 0.55)
+	_opts.set_anchors_preset(Control.PRESET_FULL_RECT)
+	_root.add_child(_opts)
+	_blockers.append(_opts)
 	var center := CenterContainer.new()
 	center.set_anchors_preset(Control.PRESET_FULL_RECT)
-	_quit.add_child(center)
+	_opts.add_child(center)
 	var panel := PanelContainer.new()
 	center.add_child(panel)
 	var col := VBoxContainer.new()
-	col.add_theme_constant_override("separation", 12)
+	col.add_theme_constant_override("separation", 10)
 	panel.add_child(col)
 	var title := Label.new()
-	title.text = "Quit battle?"
-	title.add_theme_font_size_override("font_size", 30)
+	title.text = String(battle.mission["title"])
+	title.add_theme_font_size_override("font_size", 26)
+	title.add_theme_color_override("font_color", Color(1.0, 0.86, 0.3))
 	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	col.add_child(title)
-	var text := Label.new()
-	text.text = "Return to the briefing. This battle's progress is lost."
-	text.add_theme_color_override("font_color", Color(0.75, 0.75, 0.68))
-	col.add_child(text)
-	var btns := HBoxContainer.new()
-	btns.add_theme_constant_override("separation", 10)
-	btns.size_flags_horizontal = Control.SIZE_SHRINK_CENTER
-	col.add_child(btns)
-	btns.add_child(_button("QUIT", _confirm_quit, Vector2(160, 56), "cancel"))
-	btns.add_child(_button("KEEP PLAYING", hide_quit_confirm, Vector2(190, 56), "play"))
-	_quit.visible = false
+	col.add_child(_button("RESUME", hide_options, Vector2(280, 60), "play"))
+	# Restart keeps the exact kind+seed, so the same map and waves come back.
+	col.add_child(_button("RESTART", func() -> void: _restart(Game.next_kind, int(battle.mission.get("seed", 0))), Vector2(280, 60), "rot_l"))
+	col.add_child(_button("EXIT TO MENU", _exit_to_menu, Vector2(280, 60), "menu"))
+	col.add_child(_button("QUIT GAME", func() -> void: get_tree().quit(), Vector2(280, 60), "cancel"))
+	_opts.visible = false
 
 
-## Reload into the same mission's pre-battle briefing (same map, like PLAY AGAIN).
-func _confirm_quit() -> void:
-	_restart(Game.next_kind, int(battle.mission.get("seed", 0)))
-
-
-func show_quit_confirm() -> void:
-	if battle.phase == Battle.Phase.ENDED or _quit.visible:
+func show_options() -> void:
+	if _opts.visible:
 		return
 	ctl.set_mode("")
-	_quit_was_paused = Game.paused
+	_opts_was_paused = Game.paused
 	Game.paused = true
-	_quit.visible = true
+	_opts.visible = true
 	_refresh()
 
 
-func hide_quit_confirm() -> void:
-	if not _quit.visible:
+func hide_options() -> void:
+	if not _opts.visible:
 		return
-	_quit.visible = false
-	if battle.phase == Battle.Phase.BATTLE:
-		Game.paused = _quit_was_paused
+	_opts.visible = false
+	Game.paused = _opts_was_paused
 	_refresh()
 
 
-func quit_confirm_open() -> bool:
-	return _quit != null and _quit.visible
+func options_open() -> bool:
+	return _opts != null and _opts.visible
 
 
 # --- Public API ---
@@ -468,13 +498,6 @@ func msg(text: String, color: Color) -> void:
 	tw.tween_interval(4.5)
 	tw.tween_property(l, "modulate:a", 0.0, 0.8)
 	tw.tween_callback(l.queue_free)
-
-
-func toggle_pause() -> void:
-	if battle.phase != Battle.Phase.BATTLE:
-		return
-	Game.paused = not Game.paused
-	_refresh()
 
 
 func _cycle_speed() -> void:
@@ -513,6 +536,7 @@ func _refresh() -> void:
 		_clock.text = "DEPLOY"
 	else:
 		_setup.visible = false
+		_deploy_bar.visible = false
 		_clock.text = Battle.clock_text(battle.time_limit - battle.time)
 	for i in battle.vls.size():
 		var vl := battle.vls[i]
@@ -524,7 +548,6 @@ func _refresh() -> void:
 		elif vl.owner_side == Game.RU:
 			c = Color(1.0, 0.42, 0.35)
 		l.add_theme_color_override("font_color", c)
-	_pause_btn.icon = UiIcons.tex("play" if Game.paused and battle.phase == Battle.Phase.BATTLE else "pause")
 	_speed_btn.text = "%d×" % int(Game.speed)
 	var live := battle.phase == Battle.Phase.BATTLE
 	var s := battle.support

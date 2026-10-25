@@ -17,7 +17,7 @@ static func build() -> Dictionary:
 		"paint": func(map: BattleMap) -> void: _paint(map),
 		"deploy": Rect2(-118.0, -36.0, 236.0, 154.0),
 		"vls": [
-			["Posadka", Vector3(-20.0, 0.0, 22.0), Game.UA],
+			["Treeline", Vector3(-20.0, 0.0, 22.0), Game.UA],
 			["Farm", Vector3(63.0, 0.0, -14.0), Game.UA],
 			["Crossroads", Vector3(-62.0, 0.0, 0.0), Game.UA],
 		],

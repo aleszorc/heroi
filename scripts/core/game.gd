@@ -13,6 +13,13 @@ var speed := 1.0
 ## reload_current_scene(). A negative seed means "pick one at random".
 var next_kind := "treeline"
 var next_seed := -1
+## When true, the next scene load shows the start menu instead of a battle.
+## Normal boots start here; CLI test hooks (autostart, demo, kind=, shots=) skip it.
+var show_menu := true
+## Curated scenario behind the next load (an entry from Scenarios.ALL), empty when
+## the mission is generated or rerolled. Its name/briefing dress the deployment
+## screen only while next_kind/next_seed still match the preset.
+var scenario := {}
 ## Set once the command-line mission args were read, so UI choices survive reloads.
 var cli_mission_applied := false
 

@@ -84,23 +84,21 @@ func _unhandled_input(event: InputEvent) -> void:
 			_drag_update(MOUSE_ID, e.position, e.relative)
 	elif event is InputEventKey and event.pressed and not event.is_echo():
 		match (event as InputEventKey).keycode:
-			KEY_SPACE:
-				hud.toggle_pause()
 			KEY_Q:
 				cam.rotate_step(-1)
 			KEY_E:
 				cam.rotate_step(1)
 			KEY_ESCAPE:
 				# Esc backs out one layer at a time; with nothing left to
-				# cancel it offers to quit the battle (confirmed in the HUD).
-				if hud.quit_confirm_open():
-					hud.hide_quit_confirm()
+				# cancel it opens the options overlay (resume/restart/menu).
+				if hud.options_open():
+					hud.hide_options()
 				elif mode != "":
 					set_mode("")
 				elif selected != null:
 					select(null)
 				else:
-					hud.show_quit_confirm()
+					hud.show_options()
 
 
 func _press_begin(idx: int, pos: Vector2) -> void:
