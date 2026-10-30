@@ -234,7 +234,7 @@ func _strike() -> void:
 	battle.fx.explosion(pos, 1.2)
 	if _will_hit and target.is_targetable() and target.is_vehicle:
 		target.take_penetration(FPV_PEN, pos, true, null)
-	battle.blast(pos, 4.0, 0.85, 50.0, 0.0, true, 35.0, 1.5)
+	battle.blast(pos, 4.0, 0.85, 50.0, 0.0, true, 35.0, 1.5, "fpv")
 	_finish()
 
 
@@ -294,7 +294,7 @@ func _release() -> void:
 	b.schedule(maxf(0.0, fall - 0.75), func() -> void: b.sfx.bomb_whistle(aim))
 	b.schedule(fall, func() -> void:
 		b.fx.explosion(aim, 1.7)
-		b.blast(aim, BOMB_RADIUS, 0.75, 55.0, BOMB_PEN, true, BOMB_STRUCT, 3.0))
+		b.blast(aim, BOMB_RADIUS, 0.75, 55.0, BOMB_PEN, true, BOMB_STRUCT, 3.0, "bomb"))
 	var mi := MeshInstance3D.new()
 	mi.mesh = MeshFactory.bomber_bomb()
 	battle.add_child(mi)

@@ -5,14 +5,16 @@ extends CanvasLayer
 ## veterancy, requisition purchases and the memorial. Drawn over the unit-less
 ## backdrop board built by main.gd.
 
-const KIND_LABELS := {"assault": "ASSAULT", "meeting": "MEETING", "defend": "DEFEND"}
-const KIND_COLORS := {"assault": Color(1.0, 0.72, 0.4), "meeting": Color(0.7, 0.9, 0.55), "defend": Color(0.55, 0.75, 0.95)}
+const KIND_LABELS := {"assault": "ASSAULT", "meeting": "MEETING", "defend": "DEFEND", "town": "TOWN"}
+const KIND_COLORS := {"assault": Color(1.0, 0.72, 0.4), "meeting": Color(0.7, 0.9, 0.55), "defend": Color(0.55, 0.75, 0.95), "town": Color(0.85, 0.7, 0.9)}
 
 var state: Dictionary
 
 var _root: Control
 var _scroll: ScrollContainer
 var _confirm_new := false
+## The DISBAND button awaiting its second tap (two-tap confirm, no modal).
+var _confirm_disband: Button = null
 ## Touch-drag scrolling, same mechanism as the start menu.
 var _drag_id := -1
 var _drag_accum := 0.0
@@ -37,6 +39,7 @@ func _rebuild() -> void:
 	if _root != null:
 		_root.queue_free()
 	_confirm_new = false
+	_confirm_disband = null
 	_root = Control.new()
 	_root.set_anchors_preset(Control.PRESET_FULL_RECT)
 	_root.theme = _make_theme()
@@ -188,6 +191,7 @@ func _option_card(o: Dictionary, men: int) -> Control:
 		"assault": "Enemy infantry is dug in here. Take the majority of the positions.",
 		"meeting": "Nobody holds this ground yet. Win the race for it.",
 		"defend": "The ground just taken. Break the counterattack.",
+		"town": "A village on the line. Hold it street by street.",
 	}[kind]
 	blurb.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	blurb.add_theme_font_size_override("font_size", 14)
@@ -270,29 +274,29 @@ func _unit_row(entry: Dictionary) -> Control:
 		ok.add_theme_font_size_override("font_size", 13)
 		ok.add_theme_color_override("font_color", Color(0.7, 0.85, 0.55))
 		h.add_child(ok)
-		return row
-	# Men as pips: fit (light), wounded out (yellow), empty template slot (dark).
-	var men: Array = entry["men"]
-	var template: Array = (Defs.UNITS[String(entry["id"])] as Dictionary)["men"]
-	var pips := HBoxContainer.new()
-	pips.add_theme_constant_override("separation", 3)
-	pips.size_flags_vertical = Control.SIZE_SHRINK_CENTER
-	h.add_child(pips)
-	for man: Dictionary in men:
-		var pip := ColorRect.new()
-		pip.custom_minimum_size = Vector2(11, 14)
-		pip.color = Color(0.8, 0.84, 0.68) if Campaign.geti(man, "out") <= 0 else Color(0.9, 0.7, 0.25)
-		pip.tooltip_text = "%s — %s" % [String(man["name"]), "ready" if Campaign.geti(man, "out") <= 0 else "wounded, out %d" % Campaign.geti(man, "out")]
-		pips.add_child(pip)
-	for k in maxi(0, template.size() - men.size()):
-		var pip := ColorRect.new()
-		pip.custom_minimum_size = Vector2(11, 14)
-		pip.color = Color(0.22, 0.22, 0.19)
-		pips.add_child(pip)
+	else:
+		# Men as pips: fit (light), wounded out (yellow), empty template slot (dark).
+		var men: Array = entry["men"]
+		var template: Array = (Defs.UNITS[String(entry["id"])] as Dictionary)["men"]
+		var pips := HBoxContainer.new()
+		pips.add_theme_constant_override("separation", 3)
+		pips.size_flags_vertical = Control.SIZE_SHRINK_CENTER
+		h.add_child(pips)
+		for man: Dictionary in men:
+			var pip := ColorRect.new()
+			pip.custom_minimum_size = Vector2(11, 14)
+			pip.color = Color(0.8, 0.84, 0.68) if Campaign.geti(man, "out") <= 0 else Color(0.9, 0.7, 0.25)
+			pip.tooltip_text = "%s — %s" % [String(man["name"]), "ready" if Campaign.geti(man, "out") <= 0 else "wounded, out %d" % Campaign.geti(man, "out")]
+			pips.add_child(pip)
+		for k in maxi(0, template.size() - men.size()):
+			var pip := ColorRect.new()
+			pip.custom_minimum_size = Vector2(11, 14)
+			pip.color = Color(0.22, 0.22, 0.19)
+			pips.add_child(pip)
 	var fill := Control.new()
 	fill.size_flags_horizontal = Control.SIZE_EXPAND_FILL
 	h.add_child(fill)
-	if Campaign.missing_weapon(entry) != "":
+	if not entry.get("vehicle", false) and Campaign.missing_weapon(entry) != "":
 		var cost := Campaign.geti(Defs.CAMPAIGN, "cost_man")
 		var buy := _button("+MAN %dRP" % cost, func() -> void:
 			if Campaign.buy_man(state, entry):
@@ -300,7 +304,37 @@ func _unit_row(entry: Dictionary) -> Control:
 		buy.add_theme_font_size_override("font_size", 14)
 		buy.disabled = Campaign.geti(state, "requisition") < cost
 		h.add_child(buy)
+	if Campaign.can_disband(state):
+		var dis: Button = _button("DISBAND", Callable(), Vector2(0, 40))
+		dis.pressed.connect(func() -> void: _disband_pressed(entry, dis))
+		dis.add_theme_font_size_override("font_size", 13)
+		dis.tooltip_text = "Release the unit; refunds %d RP" % Campaign.disband_refund(String(entry["id"]))
+		h.add_child(dis)
 	return row
+
+
+## First tap arms the button (SURE? +nRP) for a few seconds, second tap disbands.
+func _disband_pressed(entry: Dictionary, btn: Button) -> void:
+	if _dragging:
+		return
+	if _confirm_disband == btn:
+		if Campaign.disband_unit(state, entry):
+			_rebuild()
+		return
+	_cancel_disband()
+	_confirm_disband = btn
+	btn.text = "SURE? +%dRP" % Campaign.disband_refund(String(entry["id"]))
+	btn.add_theme_color_override("font_color", Color(1.0, 0.6, 0.4))
+	get_tree().create_timer(3.0).timeout.connect(func() -> void:
+		if _confirm_disband == btn:
+			_cancel_disband())
+
+
+func _cancel_disband() -> void:
+	if _confirm_disband != null and is_instance_valid(_confirm_disband):
+		_confirm_disband.text = "DISBAND"
+		_confirm_disband.remove_theme_color_override("font_color")
+	_confirm_disband = null
 
 
 func _support_rows() -> Control:
@@ -338,17 +372,47 @@ func _recruit_rows() -> Control:
 	var grid := GridContainer.new()
 	grid.columns = 3
 	grid.add_theme_constant_override("h_separation", 6)
-	grid.add_theme_constant_override("v_separation", 6)
+	grid.add_theme_constant_override("v_separation", 8)
 	col.add_child(grid)
 	for id: String in Defs.CAMPAIGN["cost_unit"]:
 		var cost := Campaign.geti(Defs.CAMPAIGN["cost_unit"], id)
+		var cell := VBoxContainer.new()
+		cell.add_theme_constant_override("separation", 2)
+		grid.add_child(cell)
 		var b := _button("%s  %dRP" % [String((Defs.UNITS[id] as Dictionary)["name"]).to_upper(), cost], func() -> void:
 			if Campaign.buy_unit(state, id):
 				_rebuild(), Vector2(166, 44))
 		b.add_theme_font_size_override("font_size", 14)
 		b.disabled = Campaign.geti(state, "requisition") < cost
-		grid.add_child(b)
+		cell.add_child(b)
+		var hint := Label.new()
+		hint.text = _role_hint(id)
+		hint.add_theme_font_size_override("font_size", 12)
+		hint.add_theme_color_override("font_color", Color(0.62, 0.62, 0.55))
+		cell.add_child(hint)
+	var note := Label.new()
+	note.text = "Disbanding a unit refunds half its price; replacements bought into it are not refunded."
+	note.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
+	note.add_theme_font_size_override("font_size", 12)
+	note.add_theme_color_override("font_color", Color(0.5, 0.5, 0.45))
+	col.add_child(note)
 	return col
+
+
+## One line under each recruit button: strength and what the unit is for.
+func _role_hint(id: String) -> String:
+	var def: Dictionary = Defs.UNITS[id]
+	if def.get("vehicle", false):
+		return "IFV · autocannon, TOW"
+	var n: int = (def["men"] as Array).size()
+	var role: String = {
+		"ua_rifle": "assault, RPG",
+		"ua_mg": "suppression",
+		"ua_atgm": "anti-armour",
+		"ua_sniper": "spotting, long range",
+		"ua_drone": "recon from above",
+	}.get(id, "infantry")
+	return "%d men · %s" % [n, role]
 
 
 # --- Overlays ---
@@ -521,7 +585,11 @@ func _button(text: String, cb: Callable, min_size: Vector2, icon := "") -> Butto
 	b.text = text
 	b.custom_minimum_size = min_size
 	b.focus_mode = Control.FOCUS_NONE
-	b.pressed.connect(cb)
+	if cb.is_valid():
+		# A touch that scrolled the list must not also fire the button it ended on.
+		b.pressed.connect(func() -> void:
+			if not _dragging:
+				cb.call())
 	if icon != "":
 		b.icon = UiIcons.tex(icon)
 	return b

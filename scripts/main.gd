@@ -1,9 +1,20 @@
 extends Node3D
 ## Scene root: lighting, then the battle, camera, input and HUD for the current mission.
 
+## Per-season sky and sun: sun colour, sun energy, sun pitch (deg), ambient colour,
+## ambient energy, background, saturation. Missions carry `season`; missing = summer.
+const SEASONS := {
+	"summer": {"sun": Color(1.0, 0.96, 0.88), "sun_e": 1.2, "pitch": -54.0, "amb": Color(0.60, 0.66, 0.72), "amb_e": 0.55, "bg": Color(0.17, 0.18, 0.17), "sat": 0.95},
+	"autumn": {"sun": Color(1.0, 0.92, 0.78), "sun_e": 1.1, "pitch": -44.0, "amb": Color(0.62, 0.63, 0.68), "amb_e": 0.55, "bg": Color(0.17, 0.18, 0.17), "sat": 0.9},
+	"winter": {"sun": Color(0.92, 0.95, 1.0), "sun_e": 0.95, "pitch": -34.0, "amb": Color(0.70, 0.74, 0.84), "amb_e": 0.75, "bg": Color(0.19, 0.20, 0.21), "sat": 0.8},
+	"mud": {"sun": Color(0.86, 0.87, 0.90), "sun_e": 0.8, "pitch": -48.0, "amb": Color(0.62, 0.64, 0.68), "amb_e": 0.8, "bg": Color(0.16, 0.17, 0.17), "sat": 0.82},
+}
+
+var _cam: CameraRig
+var _battle: Battle
+
 
 func _ready() -> void:
-	_environment()
 	_apply_mission_args()
 	_apply_campaign_test_arg()
 	if Game.show_menu:
@@ -29,12 +40,19 @@ func _ready() -> void:
 				and String(scen["kind"]) == Game.next_kind and int(scen["seed"]) == Game.next_seed:
 			mission["title"] = String(scen["name"]).to_upper()
 			mission["briefing"] = String(scen["briefing"])
+	# Test hook: `-- season=winter` overrides the mission's season for a look.
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("season="):
+			mission["season"] = a.substr(7)
+	_environment(String(mission.get("season", "summer")))
 	var battle := Battle.new()
 	add_child(battle)
 	battle.setup(mission)
 	var cam := CameraRig.new()
 	add_child(cam)
 	cam.focus_now(Vector3(-5.0, 0.0, 15.0))
+	_cam = cam
+	_battle = battle
 	var hud := Hud.new()
 	hud.name = "Hud"
 	var ctl := InputController.new()
@@ -110,6 +128,7 @@ func _build_menu() -> void:
 ## The unit-less generated board behind the start menu and the campaign screen.
 func _build_backdrop() -> void:
 	var mission := MissionGen.generate("meeting", randi() % 1000000)
+	_environment(String(mission.get("season", SEASONS.keys()[randi() % SEASONS.size()])))
 	var map := BattleMap.new()
 	(mission["paint"] as Callable).call(map)
 	map.finalize()
@@ -122,37 +141,59 @@ func _build_backdrop() -> void:
 	cam.focus_now(Vector3(0.0, 0.0, 10.0))
 
 
-func _environment() -> void:
+## Lighting for the season: high warm summer sun, low gold autumn light, a pale
+## low winter sun over a bright snow ambient, flat overcast for the mud season.
+func _environment(season := "summer") -> void:
+	var sd: Dictionary = SEASONS.get(season, SEASONS["summer"])
 	var env := Environment.new()
 	env.background_mode = Environment.BG_COLOR
-	env.background_color = Color(0.17, 0.18, 0.17)
+	env.background_color = sd["bg"]
 	env.ambient_light_source = Environment.AMBIENT_SOURCE_COLOR
-	env.ambient_light_color = Color(0.62, 0.65, 0.70)
-	env.ambient_light_energy = 0.55
+	env.ambient_light_color = sd["amb"]
+	env.ambient_light_energy = sd["amb_e"]
 	env.tonemap_mode = Environment.TONE_MAPPER_FILMIC
 	env.adjustment_enabled = true
-	env.adjustment_saturation = 0.9
-	env.adjustment_contrast = 1.05
+	env.adjustment_saturation = sd["sat"]
+	env.adjustment_contrast = 1.05 if season != "mud" else 1.0
 	var we := WorldEnvironment.new()
 	we.environment = env
 	add_child(we)
 	var sun := DirectionalLight3D.new()
-	sun.rotation = Vector3(deg_to_rad(-52.0), deg_to_rad(-30.0), 0.0)
-	sun.light_color = Color(1.0, 0.95, 0.86)
-	sun.light_energy = 1.15
+	sun.rotation = Vector3(deg_to_rad(float(sd["pitch"])), deg_to_rad(-30.0), 0.0)
+	sun.light_color = sd["sun"]
+	sun.light_energy = sd["sun_e"]
 	sun.shadow_enabled = true
 	sun.directional_shadow_max_distance = 400.0
 	add_child(sun)
 
 
 ## Test hook: `godot -- shots=/dir` saves screenshots at fixed frames, then quits.
+## `look=x,z,zoom[,turns]` frames the camera on a ground point for a close look at
+## scenery (quits after the second shot); `hit=x,z,power,radius` lands a structural
+## blast there before the second shot, to inspect a damaged house.
 func _process(_delta: float) -> void:
 	if Game.has_arg("demo"):
 		return
+	var look := ""
+	var hit := ""
+	for a in OS.get_cmdline_user_args():
+		if a.begins_with("look="):
+			look = a.substr(5)
+		elif a.begins_with("hit="):
+			hit = a.substr(4)
 	for a in OS.get_cmdline_user_args():
 		if a.begins_with("shots="):
 			var frame := Engine.get_process_frames()
+			if frame == 5 and look != "" and _cam != null:
+				var v := look.split(",")
+				_cam.zoom = float(v[2]) if v.size() > 2 else 20.0
+				_cam.focus_now(Vector3(float(v[0]), 0.0, float(v[1])))
+				if v.size() > 3:
+					_cam.rotate_step(int(v[3]))
+			if frame == 200 and hit != "" and _battle != null:
+				var v := hit.split(",")
+				_battle.blast(Vector3(float(v[0]), 0.0, float(v[1])), 1.0, 0.0, 0.0, 0.0, false, float(v[2]), float(v[3]))
 			if frame in [30, 400, 900, 1500, 2400]:
 				get_viewport().get_texture().get_image().save_png("%s/shot_%04d.png" % [a.substr(6), frame])
-			if frame > 2400:
+			if frame > 2400 or (look != "" and frame > (900 if hit != "" else 400)):
 				get_tree().quit()

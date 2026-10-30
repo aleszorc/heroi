@@ -4,8 +4,8 @@ extends CanvasLayer
 ## drawn over a unit-less backdrop map built by main.gd. Picking an entry stores
 ## the choice in the Game autoload and reloads the scene into deployment.
 
-const KINDS := ["assault", "defend", "meeting"]
-const KIND_LABELS := {"treeline": "DEFEND", "defend": "DEFEND", "assault": "ASSAULT", "meeting": "MEETING"}
+const KINDS := ["assault", "defend", "meeting", "town"]
+const KIND_LABELS := {"treeline": "DEFEND", "defend": "DEFEND", "assault": "ASSAULT", "meeting": "MEETING", "town": "TOWN"}
 const DRAG_THRESHOLD := 10.0
 
 var _scroll: ScrollContainer

@@ -55,10 +55,12 @@ The campaign is **one operation played as a run**: 6–9 battles along a strip o
 ### 2b.3 Requisition
 - One currency, earned from battle results and objectives held.
 - It buys replacements (green), support charges (mortar missions, FPV drones, bomber sorties) and one-off assets (Bradley repair, an extra team).
+- **Disbanding** releases a unit from the roster and refunds half its purchase price, rounded down (`Campaign.DISBAND_REFUND`); replacements bought into it refund nothing, and its survivors are not fallen, so they do not go to the memorial. The last unit cannot be disbanded — the platoon always keeps one deployable unit.
 - **Support charges are campaign ammunition** — no longer refilled free each battle. "When to spend the mortar" becomes a campaign decision as well as a battle one.
 
 ### 2b.4 Between battles
 - One screen, in the spirit of the deployment screen: casualty report and memorial, requisition spend, sector choice where available.
+- Each roster row carries its buy (+MAN) and DISBAND buttons; destructive taps (disband, new operation) use a two-tap confirm on the button itself (it turns into "SURE? +nRP" for three seconds, matching NEW OPERATION's "SURE? TAP AGAIN") rather than a modal dialog. Buttons the player cannot afford are disabled, and recruit buttons carry a one-line strength/role hint.
 
 ### 2b.5 Operation "Steppe"
 - The authored campaign (M3) is a **curated run** on this system — fixed seeds, written briefings, a scripted final battle — the same relationship the curated start-menu scenarios have to random battles.
@@ -84,7 +86,7 @@ The campaign is **one operation played as a run**: 6–9 battles along a strip o
 | Open | 0 | .10 | 1.0 | 1.0 | 1.0 |
 | Field | .05 | .20 | 1.2 | 1.3 | 1.0 |
 | Road | 0 | 0 | 0.9 | 0.6 | 1.0 |
-| Trees (posadka) | .45 | .70 | 1.5 | 4.0 | .72 |
+| Trees (posadka) | .55 | .75 | 1.5 | 4.0 | .5 (every cell counts) |
 | Building | .70 | .80 | 1.6 | impassable | blocks |
 | Trench | .75 | .65 | 1.1 | 3.0 | 1.0 |
 | Gully | .45 | .50 | 1.3 | 2.5 | 1.0 |
@@ -92,7 +94,9 @@ The campaign is **one operation played as a run**: 6–9 battles along a strip o
 | Rubble | .50 | .50 | 1.6 | 3.0 | .85 |
 | Wreck | .60 | .50 | 1.3 | impassable | .5 |
 
+- Line of sight ignores the cells within 2 of either end (seeing out of and into windows, past the wreck a man shelters behind) — except trees: every tree cell on the line counts, so a wood 3 or more cells deep cannot be seen or shot through, a man two cells inside it is seen at a quarter of the open-ground chance and one three cells deep not at all. The observer's own edge of the wood is open to him: standing in trees, the tree cells next to him are free, so a man just inside the edge sees and shoots out at full visibility while fire coming the other way must get through his trees.
 - Trenches are dug fieldworks, not dips: a sheer-sided cut with a flat floor at standing depth — about 1.7 m of real digging, drawn 2.1 world units deep to match the soldiers' 1.25× scale — so a standing soldier is roughly head-level with the ground. The walls are near-vertical dark revetment faces standing on the cell boundary (drawn by the view, with the lip kept crisp), and the spoil berm rises on every lip. Men crossing the lip play a quick hop down into the cut or a slower clamber out over the revetment (briefly slowed and unable to fire); movement along the floor is ordinary walking. Gullies stay smooth banks, sunk 1.4.
+- Trenches are dressed with sandbag fieldworks derived from the cut's own geometry (`MapView._build_fieldworks`): a two-course parapet runs along the berm crest of every enemy-facing lip (92% of cells; north for defend/meeting, south for the enemy's trenches in assault), with a three-course firing bay about every third metre; a thinner single-course parados sits behind (45%); a bag wall caps each open trench end; now and then a stack revets the inner face of the fire-side wall at floor level, and loose bags lie dropped on the spoil. Four bag meshes (parapet run, firing bay, loose bag, low run), uneven in size, yaw and colour, drawn as four MultiMeshes with per-instance tone.
 - Craters are premade rimmed-dish meshes in the dark wet-earth family of the trench spoil: 8 variants (rim radius 1.1–2.4 m, saucers with low lips through deep bowls under heavy spoil rims, varying spoke counts and elliptical asymmetry), each instance with random yaw, non-uniform XZ scale and a per-instance tone. They are scattered on painted CRATER cells at map build (in per-variant MultiMeshes) and spawned per big blast at runtime, scaled with the blast radius (FPV small, artillery big).
 - Crater meshes never stack: a registry of live craters merges a new hole whose centre lands closer than 0.55× the summed rim radii to an existing one — that crater grows ~16% per hit toward a 4 m rim-radius cap, darkens toward a wet-mud floor tone and drifts slightly toward the new impact, so repeated shelling of one spot deepens one churned pit. Distinct-but-touching craters still coexist, like a real crater field.
 - Under each mesh the heightfield keeps only a shallow scorched dimple (a lone hit ~0.3 deep, repeated hits saturating at 0.6, rim lift capped at 0.12), vertex-coloured from scorched char through disturbed earth: the mesh sits in a slight hollow, soldiers duck into it and the ground never z-fights the mesh. Painted CRATER cells get the same dimple at build. Only soft ground (open, field, road, crater) deforms; buildings, trenches, gullies and treelines keep their heights.
@@ -132,26 +136,29 @@ Two orders only: **tap ground = move there**, **tap a spotted enemy = attack it*
 | **Guard** | On arriving anywhere it settles in facing the threat (nearest known enemy, else the enemy map edge): men take cover against that direction and prefer targets inside the ±45° arc; vehicles pivot their front armour to it |
 | **Hold fire** | If it settles concealed and unseen it waits in ambush (+15% concealment) until an enemy is within 60 m (150 m for vehicles) or it is fired on, then springs |
 | **Smoke** | A squad pinned in the open pops a smoke screen towards the shooter (limited, 30 s between throws) |
-| **Reposition** | Local only: it scrambles to cover away from an FPV homing in on it, and shifts a few metres to better cover under sustained fire — it never abandons the area it was sent to |
+| **Reposition** | Local only: in poor cover (< .5) it scrambles to cover away from an FPV homing in on it — dug in, it stays down instead — and shifts a few metres to better cover under sustained fire; it never abandons the area it was sent to |
 
 Vehicles reverse automatically on short moves to the rear, keeping their front armour towards the enemy. TOW and Stugna fire only when stationary. An explicit attack tap overrides target choice and breaks hold-fire.
 
 ### 3.4 Spotting
 - Each unit is re-checked several times a second against every enemy observer within 260 m.
 - Chance per 0.5 s = visibility × (1 − concealment) × range falloff, doubled if the target was seen in the last 6 s.
-- Concealment rises when stationary (+.12) and falls when running (×0.5) or firing (×0.35 for 3 s). Vehicles are ×0.5, and ×0.4 again while moving.
+- Concealment rises when stationary (+.12), when the men lie flat (+.20, kneeling +.05) and falls when running (×0.5) or firing (×0.35 for 3 s, scaled by the weapon's *signature*: a rifle burst 1, a single sniper shot 0.3, so the sniper team keeps ~80% of its concealment after firing). The sniper team adds +.10 stealth. Vehicles are ×0.5, and ×0.4 again while moving. (`Defs.STEALTH`, weapon `signature`, unit `stealth`.)
 - Anything within 10–45 m (depending on concealment) with line of sight is spotted automatically.
 - Lost contacts show a **?** at their last known position for 45 s.
 - Recon drones reveal everything in a 55 m radius with high probability, except units in buildings.
 
 ### 3.5 Shooting
-`hit = acc × state × range_falloff × (0.4 + 0.6·visibility) × (1 − cover)`, with ×0.8 if the target is halted and ×1.15 if it is running.
-Misses scatter and still suppress whoever is nearby. Infantry hits are 55% killed, 45% wounded (both out of the fight).
+`hit = acc × state × range_falloff × (0.4 + 0.6·visibility) × (1 − cover)^1.8 × posture`, with ×1.15 if the target is running.
+Cover is the better of the ground cover and the directional shield (wall, wreck). Ground cover faces the threat the unit took it against (`Defs.COVER`): it counts in full inside ±60° of that facing and falls to 40% of its value from straight behind, so fire from the flank or rear of a trench or a wood edge bites far harder; buildings protect all round. With the power curve a trench (.75) keeps 8% of the hit chance, trees (.55) 24%, a crater (.35) 46% — a dug-in team is nearly immune to small arms from its front.
+Target choice scores by distance, +80 m outside the guard arc, and +40 m per man a team is short of three (`Defs.TARGETING`): a two-man team far off is a poor pick next to a closer squad.
+Misses scatter and still suppress whoever is nearby; a missed rocket or shell lands 2.5× further off than a missed bullet, usually outside its own blast radius. Blasts respect cover too: a rocket or tank round fired across the ground is stopped by the same (1 − cover)^1.8 curve as bullets, while a shell or drone coming from above still reaches into a trench at ×(1 − .65·cover). Infantry hits are 55% killed, 45% wounded (both out of the fight).
 Armour: penetration × (0.85–1.15) against front, side or top armour, chosen by impact angle (front within ±50°). A penetration rolls for destroyed (55%), immobilized, weapons out, or crew casualty.
 
 ### 3.6 Suppression and morale
-- Every shot near a unit adds suppression, reduced by up to 35% by cover. It decays 7–21 per second after 1.5 s without incoming fire; faster in cover.
-- States: **Ready** → **Suppressed** (>28: 60% accuracy, 75% speed) → **Pinned** (>60: won't move, 30% accuracy) → **Panicked** (>90: in cover they *cower*, in the open they *flee* rearwards for 7–12 s).
+- Every shot near a unit adds suppression (`Defs.SUPPRESSION`). The volley's suppression is scaled by how well aimed it is (×0.5–1 for the shooter's state and ×0.5–1 for range), then by cover twice: ×(1 − .85·cover) at the impact (directional, as for hits) and ×(1 − .5·cover) at the unit (all incoming fire, blasts included). A trench keeps about a quarter of rifle-fire suppression; a man in the open takes all of it.
+- It decays 7–21 per second after 1.5 s without incoming fire, faster in cover — and a unit in cover keeps recovering even while fire is still coming in, at cover × 0.6 of that rate (men duck below the lip between bursts), so a dug-in team cannot be pinned by a squad shooting at it from 150 m; it takes close or heavy fire, or HE.
+- States: **Ready** → **Suppressed** (>28: 60% accuracy, 75% speed) → **Pinned** (>60: won't move, 30% accuracy) → **Panicked** (>90, for 7–12 s). A panicked unit never runs across a field (`Defs.PANIC`): with any real cover against the threat (≥ .3 directional) it *cowers* where it is; in the open it dashes at most 8 m to the best cover close by and cowers there. When the panic passes it crawls back to the post it was holding and takes up its old facing (a unit that broke while on the move settles where it stopped; the move order is lost).
 - Morale starts at 55–80 and drops with casualties (−10), nearby friendly losses (−2 per man, −6 per unit) and panic. Thresholds scale with morale. At 12 or below the unit **routs** off the map.
 
 ### 3.6b Soldier bodies, stances and cover
@@ -169,7 +176,7 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
   - **Trees or gully:** he kneels.
   - **Moving while suppressed:** he crawls.
   - **Panicked:** he cowers in place.
-- **Directional cover:** obstacles 1–3 m towards the shooter add protection (wall .85, wreck .7, rubble .55, trees .3). Cover selection maximises that against the threat and is re-checked when the threat moves.
+- **Directional cover:** obstacles 1–3 m towards the shooter add protection (wall .85, wreck .7, rubble .55, trees .3). Cover selection maximises that against the threat and is re-checked when the threat moves. The ground cover itself (trench, trees, gully…) is also directional: it was taken against the threat and gives only 40% of its value against fire from behind (§3.5).
 - **Posture modifies hit chance:** crouched ×0.7, prone ×0.5.
 
 ### 3.6b-2 Soldier detail and squad movement
@@ -222,7 +229,9 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 - **Reloads:** magazines run dry (AK 10 bursts, PKM 10, SVD 10 shots, RPG 1). The reload animation tilts the weapon, sends the support hand to the vest pouch and back, and blocks firing for 2.6–6 s.
 
 ### 3.6c Destructible buildings
-- **Construction:** houses are 1 m wall segments, window sills and lintels, and gable roof slabs. The ridge runs along the house's long axis, the eaves rest on the wall tops with a 0.3 m overhang, and wall-coloured gable infill closes the end triangles (it falls with the roof). Each house has one door: a full grid cell of wall left out, so the visible gap and the walkable cell match. Every third wall segment is a window (sill below, lintel above, open in between). Every piece has hit points: brick 130, plaster 90.
+- **Construction:** houses are 1 m wall segments, window sills and lintels, a door frame (posts and head beam) and a roof, on a plinth slab that outlives everything above it. Three roof styles: a **gable** roof (two slopes of three butted slabs whose undersides pass exactly through the wall-top edges and meet under a ridge cap, prism gable triangles flush under the slopes, a 0.3 m eave overhang), a **hip** roof (one lofted solid, every slope at the same pitch, short ridge cap), and for brick houses a **flat** roof behind a parapet. Intact gable and hip roofs usually carry a chimney. Each house has one door: a full grid cell of wall left out, so the visible gap and the walkable cell match. Windows sit every second or third metre with a per-house phase, never at corners (sill below, lintel above, open in between). Per-house variation: wall colour (whitewash, cream, pale green, ochre or blue-grey plaster; four brick tones), roof colour (tile, slate, rusty tin), window rhythm, chimney. Every piece has hit points: brick 130, plaster 90.
+- **Ruined variants** from mission data (`ruin`): below 0.35 the roof is intact and some wall slots are built low; from 0.35 the roof has caved in — one or two slope sections lean from the top of a standing eave wall (built full height) down to the floor inside the footprint, the rest is gone and about half the walls are sooted; from 0.6 the roof is absent altogether. Floors carry rubble in proportion.
+- **Support rules:** every piece is physically carried and drops as debris when its carrier goes (`_drop_unsupported`, cascading): a window lintel needs its sill and at least one full-height jamb beside it; the door head and posts need the jambs; a gable triangle or parapet needs at least half of the slots of the wall it stands on at full height; a caved slab needs the wall slots under its upper edge; the chimney needs its slab, the chimney cap the chimney; a ridge cap needs two slabs. A carrier chipped more than 0.25 m below its built top carries nothing. Pieces that would start unsupported (a gable over a mostly ruined end wall) are pruned at build.
 - **Structural damage (power and radius):**
 
 | Weapon | Power | Radius |
@@ -274,15 +283,20 @@ Armour: penetration × (0.85–1.15) against front, side or top armour, chosen b
 - No drone team means no drones. Protecting the operators matters.
 
 ### 3.7b Scenarios (procedural)
-- `MissionGen.generate(kind, seed)` builds a full mission from a seed: randomized steppe (treelines with gaps, fields, roads with poles, gullies, a hamlet of 3–8 buildings near an objective, craters, wrecks), three named victory locations, deploy zone and enemy plan. The same seed reproduces the same map (combat itself stays random); kind and seed are shown on the briefing panel.
+- `MissionGen.generate(kind, seed)` builds a full mission from a seed: randomized steppe (treelines with gaps, fields, roads with poles, gullies, a hamlet of 3–8 buildings near an objective, craters, wrecks), three named victory locations, deploy zone, enemy plan, Russian fire plan and season. The same seed reproduces the same map and plan (combat itself stays random); kind and seed are shown on the briefing panel.
+- **Victory locations never touch:** neighbouring centres are at least 40 m apart (`MissionGen.VL_MIN_DIST`, rings are 16 m), and all sit at least 25 m inside the map edge.
+- **Season** (`mission["season"]`: summer, autumn, winter or mud, weighted 3:3:1:1, drawn from its own stream so maps found under a seed stay the same): the briefing carries a one-line weather note; the map view renders the palette. In mud, mechanized waves keep to the road where one leads towards their objective.
+- **Enemy plan:** each kind rolls a named pattern per seed and builds its waves from it, so no two seeds play the same way. Waves vary by **entry edge** (north above the objective, a north corner, or partway down the east/west edge for a flank), **route style** (direct, hook round a flank, along the main road, along a gully), **composition** (mech: vehicle + 2–3 groups; probe: 2 groups, no vehicle; armour: 2 vehicles + 1 group; dismount: 3–4 groups with an MT-LB behind; tank: a lone T-72; feint: vehicle + 1 group that halts short) and **style** (the §7 behaviour hint). Patterns: defend — drumbeat (even beats, one heavy), lull_push (probe, long quiet, then armour and infantry from two directions), early_rush (two waves in the first 90 s, regroup, then armour and a late flank), steady (mechanized pressure, last column round a corner); assault — counter, reinforce (fresh infantry joins the defence early), flank_counter (from the east/west edge), tank_overwatch; meeting — columns, race, echelon; town — house_to_house, street_rush, encircle (dismounts from both flanks). The pattern name is `mission["plan"]`.
+- **Russian fire plan** (`mission["ru_support"]`, schema in `Support.DEFAULT_RU`): the prep barrage is none / short (5 shells) / full (10) / late (8 shells at 60–200 s), aimed at a mission-specific band — flags and trenches when we defend, the forming-up strip when we attack (never before 28 s, and the briefing warns), the contested middle or the approach when both race. FPV, artillery (4–8 shells) and recon first-strike times and cadences scale with a per-seed intensity of 0.7–1.3. The hand-built Treeline 7 carries no plan and gets the classic one (full barrage on the treeline band, FPV from 90 s every 40–60 s, artillery from 170 s every 120–160 s).
 - **Every battle is capped at 10 minutes of sim time** (`Battle.TIME_CAP`); mission data may ask for less but never more. Wave schedules scale with each mission's `time_limit`, so pacing holds at any length.
-- **Defend:** you hold three southern positions with trenches; 3–5 escalating waves attack from the north (8–10 min).
+- **Defend:** you hold three southern positions with trenches; 3–5 waves attack from the north on one of the plan patterns below (8–10 min). The platoon starts on cover: squads, MG and ATGM teams are snapped onto the trench line behind their flag (within 20 m of the intended spot), the sniper and drone team into the nearest treeline or grove (else a trench end or a house), so nobody starts prone in an open field facing the wrong way; the trenches lie south of the flags and the default facing is north.
 - **Assault:** the enemy is dug in on three northern positions from the start (hold-mode defenders, plus one counterattack wave); you deploy in the south and must take a majority before time runs out (9–10 min).
 - **Meeting:** all three objectives start neutral in the middle band; enemy columns race for them from the first minute — whoever holds the majority at time-out wins (8–10 min).
-- The start menu (`scripts/ui/menu.gd`, ГЕРОЇ wordmark over a unit-less generated backdrop) lists the curated scenarios from `scripts/data/scenarios.gd` — Treeline 7 plus six vetted kind+seed presets (Tykhyi Brid, Stari Kopani, Vovche Pole, Zhuravlyne, Mlynove, Kachyne) — plus a CAMPAIGN entry (the §2b operation; CONTINUE CAMPAIGN when a save exists) and a RANDOM BATTLE entry (random kind and seed, both shown so a good map can be found again). Picking one lands on the map in deployment mode framed as the pre-battle screen (title, briefing, START BATTLE). The end screen offers PLAY AGAIN (same map), NEW BATTLE (new seed) and MENU; the in-battle menu button opens the options overlay (RESUME / RESTART / EXIT TO MENU / QUIT). CLI: `-- kind=assault seed=7` skips the menu.
+- **Town:** a village on a street grid — main street, two or three cross streets and a lane, 12–20 houses along them (up to 80% ruined, rubble beside the worst), gardens instead of treelines, fields and a gully beyond — held like a defend mission (8–10 min). Objectives sit on crossroads and public buildings (Church, School, Market…); the enemy comes house to house from the north with more infantry and fewer vehicles. CLI `kind=town`.
+- The start menu (`scripts/ui/menu.gd`, ГЕРОЇ wordmark over a unit-less generated backdrop) lists the curated scenarios from `scripts/data/scenarios.gd` — Treeline 7 plus eight vetted kind+seed presets (Tykhyi Brid, Stari Kopani, Vovche Pole, Zhuravlyne, Mlynove, Kachyne, and the town battles Lypove and Zelenyi Hai) — plus a CAMPAIGN entry (the §2b operation; CONTINUE CAMPAIGN when a save exists) and a RANDOM BATTLE entry (random kind and seed, both shown so a good map can be found again). Picking one lands on the map in deployment mode framed as the pre-battle screen (title, briefing, START BATTLE). The end screen offers PLAY AGAIN (same map), NEW BATTLE (new seed) and MENU; the in-battle menu button opens the options overlay (RESUME / RESTART / EXIT TO MENU / QUIT). CLI: `-- kind=assault seed=7` skips the menu.
 
 ### 3.8 Victory
-- Victory locations (flags on poles; the cloth waves in the wind via a shared vertex shader, phase-offset per flag by world position, recoloured on capture through instance uniforms) are captured by being the only side with steady troops within 16 m for 8 s.
+- Victory locations (flags on poles; the cloth waves in the wind via a shared vertex shader, phase-offset per flag by world position, recoloured on capture through instance uniforms) are captured by being the only side with steady troops within 16 m for 8 s. Generated locations are placed at least 40 m apart, so capture rings never overlap and each flag is its own fight.
 - **Win:** hold the majority of locations at time-out, or break every enemy wave.
 - **Lose:** every unit destroyed or routed, or the enemy holds the majority at time-out.
 
@@ -310,7 +324,7 @@ Planned:
 ## 5. Art direction
 
 - **Diorama low-poly.** Every model is built in code from primitives, flat-shaded, vertex-coloured, one mesh per object. That means tiny builds, a single draw call per object, and no texture memory.
-- **Palette:** late-autumn steppe. Olive grass, ploughed brown fields, ochre and olive poplars and acacias, grey-white plaster and red-brick ruins. Saturation is held around 0.9.
+- **Palette by season** (`mission["season"]`, missing = summer; the start-menu backdrop takes its generated mission's season or a random one): **summer** — green steppe under ripe gold grain, green poplars and acacias, a high warm sun; **autumn** — the late-steppe olive grass, yellow-brown stubble fields, gold and rust crowns, low golden light; **winter** — snow over everything but the churned roads and trench spoil, bare twig-lattice trees and thickets, snow-dusted roofs, a pale low sun over a bright cool ambient; **mud** (rasputitsa) — dead dull grass, dark churned fields and muddy roads, bare trees, flat overcast light. Plaster is grey-white and ruins red-brick in every season. Saturation is held around 0.8–0.95 by season (`main.gd SEASONS`, `MapView.GROUND`, `MeshFactory.LEAF`).
 - **Readability over realism:** soldiers drawn 25% oversize, blue or red team discs, yellow tape on Ukrainian soldiers and red on Russian (both real practice), white crosses on Ukrainian vehicles, cope cages on Russian tanks. Everything else stays real scale so the soldiers read against it: treeline poplars and acacias stand 7–14 m (real posadka height), vehicles, poles and houses are true size.
 - **Effects:** tracers, rocket and missile smoke trails, flash plus smoke plus dirt explosions, persistent burning wrecks, craters.
 
@@ -319,10 +333,11 @@ Planned:
 
 ## 7. AI
 
-- **Waves:** each wave has a spawn time, a route and an objective.
-- **Infantry:** advance (run when no contact) → engage (halt and fire 5–10 s) → bound (rush ≤25 m to the best cover towards the next waypoint, only if suppression is under 35) → repeat → guard the objective. The AI gives the same two inputs as the player — destinations and halts — and the units' own autonomy does the rest.
-- **Vehicles:** advance, then overwatch whenever enemies are within 225 m for 8–14 s, then push for 8 s. They stop one waypoint short of the objective. A vehicle with its weapons knocked out retreats.
-- **Support:** fire director picks only from what the Russian side has actually spotted. The rule is the same as for the player: no cheating vision.
+- **Waves:** each wave has a spawn time, a route, an objective and a **style** hint from the mission (`EnemyAI.STYLES`): assault (the baseline below), rush (closes to 90 m, fires 2–4 s between bounds, bounds 35 m and keeps going up to 55 suppression; vehicles push 14 s), probe (opens fire at 190 m, 8–14 s between short bounds, only under 20 suppression, and falls back a waypoint to cover once half the group is down or suppression passes 50), flank (between the two), overwatch and feint (the wave's route is cut at `stop_at`; it drives or walks there and fights from that point, never pushing into contact; feints also fall back when hurt). Waves with `hold` stay where they spawn.
+- **Infantry (assault):** advance (run when no contact) → engage (halt and fire 5–10 s) → bound (rush ≤25 m to the best cover towards the next waypoint, only if suppression is under 35) → repeat → guard the objective. The AI gives the same two inputs as the player — destinations and halts — and the units' own autonomy does the rest.
+- **Vehicles (assault):** advance, then overwatch whenever enemies are within 225 m for 8–14 s, then push for 8 s. They stop one waypoint short of the objective (right on it when the wave halts at a route point). A vehicle with its weapons knocked out retreats.
+- **Support:** the fire plan comes from the mission (§3.7b); the fire director picks only from what the Russian side has actually spotted. The rule is the same as for the player: no cheating vision.
+- **Indirect fire** (`Defs.ARTILLERY`): player mortar 6 rounds at 0.9 s, 9 m scatter, 8 m blast, 0.75 lethality, 60 suppression; Russian artillery 4–8 rounds at 1.3 s, 14 m scatter, 9 m blast, 0.70 lethality, 65 suppression, 220 wall damage (a 152 mm shell takes a brick wall down); prep barrage 8 m blast, 0.50 lethality, 50 suppression. Suppression is felt out to three radii, so a shell 10 m away pins a squad in the open; cover cuts the hit chance by up to 65% and suppression by 35%, so a trench still costs a man or two per fire mission instead of the squad.
 
 Planned:
 - Flanking choice between alternative routes.
@@ -348,25 +363,25 @@ Godot 4.7, GDScript, Mobile renderer. Everything is built in code from `scenes/m
 |---|---|
 | `scripts/core/game.gd` | Autoload: internal pause and speed, side constants, test arguments, flow state (`show_menu`, next mission, curated `scenario`) |
 | `scripts/core/springs.gd` | Exact damped springs for procedural animation (Holden's "Spring Roll Call"): scalar/vector/quaternion trackers, damper alpha, quaternion log/exp for inertialization |
-| `scripts/data/defs.gd` | Weapon and unit tables (all balance numbers) |
+| `scripts/data/defs.gd` | Weapon, unit and indirect-fire tables (all balance numbers) |
 | `scripts/data/mission_treeline.gd` | Hand-built mission: map painting, buildings, units, waves |
-| `scripts/data/mission_gen.gd` | Procedural missions from kind + seed (assault, defend, meeting, treeline) |
-| `scripts/data/scenarios.gd` | Curated scenario presets (name, kind, seed, briefing) for the start menu |
+| `scripts/data/mission_gen.gd` | Procedural missions from kind + seed (defend, assault, meeting, town): map, objectives 40 m apart, season, enemy plan patterns and the Russian fire plan |
+| `scripts/data/scenarios.gd` | Curated scenario presets (name, kind, seed, briefing) for the start menu, two of them town battles |
 | `scripts/data/campaign.gd` | Campaign (§2b): state and save, front ribbon, mission dressing, debrief writer, requisition purchases |
 | `scripts/map/battle_map.gd` | Grid, terrain properties, heights, crater dimple deformation, A* paths, LOS, cover search |
-| `scripts/map/map_view.gd` | Chunked ground mesh with local rebuild, multimesh trees and props, crater mesh registry (merge-grow, no stacking), buildings, wrecks |
-| `scripts/art/mesh_factory.gd` | All procedural models (soldiers, vehicles, trees, houses, drones) |
+| `scripts/map/map_view.gd` | Chunked ground mesh with local rebuild (seasonal palette), multimesh trees and props, trench sandbag fieldworks, crater mesh registry (merge-grow, no stacking), wrecks |
+| `scripts/art/mesh_factory.gd` | All procedural models (soldiers, vehicles, seasonal and bare trees, sandbag variants, drones) and the mesh `Builder` |
 | `scripts/units/*.gd` | `Unit` base (orders, autonomy, morale, spotting state), `InfantryUnit`, `Soldier` (rig, spring-smoothed animation with inertialized pose switches, steering), `VehicleUnit` |
-| `scripts/map/building.gd` | Destructible houses: pieces, damage, debris, roof collapse, grid upkeep |
+| `scripts/map/building.gd` | Destructible houses: gable/hip/flat roofs, ruined variants, piece support rules, damage, debris, roof collapse, grid upkeep |
 | `scripts/fx/puffs.gd` | Volumetric puff particle system (smoke, dust, flame) |
 | `scripts/audio/sfx.gd` | Sound effects: pooled positional one-shots, drone/engine loops, field ambience |
 | `scripts/dev/demo.gd` | Scripted visual showcase for screenshots (`-- demo shots=/dir`) |
 | `scripts/dev/make_branding.gd` | Regenerates the icon and boot splash PNGs in `assets/branding/` (headless) |
 | `scripts/combat/combat.gd` | Shot and area-fire resolution, delayed impacts |
 | `scripts/battle/battle.gd` | Simulation step, scheduler, spotting, blasts, victory |
-| `scripts/battle/support.gd` | Player mortar and drones (recon, FPV, heavy bomber); enemy artillery, FPV and recon timers |
+| `scripts/battle/support.gd` | Player mortar and drones (recon, FPV, heavy bomber); enemy prep barrage, artillery, FPV and recon on the mission's fire plan (`ru_support`, classic fallback) |
 | `scripts/battle/drone.gd` | Recon, FPV and heavy bomber drones |
-| `scripts/battle/enemy_ai.gd` | Wave spawning and unit behaviour |
+| `scripts/battle/enemy_ai.gd` | Wave spawning and unit behaviour, tuned per wave style (assault, rush, probe, flank, overwatch, feint) |
 | `scripts/battle/victory_location.gd` | Capture flags (wind-animated cloth, owner recolouring) |
 | `scripts/ui/*.gd` | Camera rig, input controller, HUD, start menu (`menu.gd`), campaign screen (`campaign_screen.gd`), procedural icons |
 
@@ -376,7 +391,7 @@ Godot 4.7, GDScript, Mobile renderer. Everything is built in code from `scenes/m
 
 **Test hooks:**
 - `godot --headless --path . --fixed-fps 30 --quit-after 6000 -- autostart fast log` plays a whole battle with the player passive and prints the event log and result. An occasional `Leaked instance: AudioStreamPlayback…` warning at exit is engine shutdown noise (audio still mixing at quit), not a real leak.
-- `-- shots=/dir` (non-headless) saves screenshots at fixed frames.
+- `-- shots=/dir` (non-headless) saves screenshots at fixed frames; `look=x,z,zoom` frames a ground point, `hit=x,z,power,radius` lands a structural blast before the second shot, `season=winter` overrides the mission's season.
 
 ## 10. Open questions
 1. ~~Is the campaign one linear operation or a choice of sectors?~~ Answered 2026-10-25: a front-ribbon run with two-way sector choices (§2b).

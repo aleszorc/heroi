@@ -10,13 +10,14 @@ const H := 120
 const CELL := 2.0
 const HALF := W * CELL * 0.5
 
-## cover: share of hits the terrain stops. conceal: resistance to being spotted.
-## inf / veh: path cost multiplier, 0 = impassable. los: visibility kept per cell crossed.
+## cover: protection from fire (Combat applies it as (1 - cover)^Defs.COVER.hit_power).
+## conceal: resistance to being spotted. inf / veh: path cost multiplier, 0 = impassable.
+## los: visibility kept per cell crossed (trees count every cell, see los()).
 const PROPS := {
 	T.OPEN: {"cover": 0.0, "conceal": 0.10, "inf": 1.0, "veh": 1.0, "los": 1.0},
 	T.FIELD: {"cover": 0.05, "conceal": 0.20, "inf": 1.2, "veh": 1.3, "los": 1.0},
 	T.ROAD: {"cover": 0.0, "conceal": 0.0, "inf": 0.9, "veh": 0.6, "los": 1.0},
-	T.TREES: {"cover": 0.45, "conceal": 0.70, "inf": 1.5, "veh": 4.0, "los": 0.72},
+	T.TREES: {"cover": 0.55, "conceal": 0.75, "inf": 1.5, "veh": 4.0, "los": 0.5},
 	T.BUILDING: {"cover": 0.70, "conceal": 0.80, "inf": 1.6, "veh": 0.0, "los": 0.0},
 	T.TRENCH: {"cover": 0.75, "conceal": 0.65, "inf": 1.1, "veh": 3.0, "los": 1.0},
 	T.GULLY: {"cover": 0.45, "conceal": 0.50, "inf": 1.3, "veh": 2.5, "los": 1.0},
@@ -471,13 +472,19 @@ func _nearest_open(c: Vector2i, astar: AStarGrid2D) -> Vector2i:
 	return Vector2i(-1, -1)
 
 
-## Visibility from a to b, 0..1. Buildings block, trees and smoke thin it out.
-## Cells within 2 of either end are ignored so units can see out of windows and treeline edges.
+## Visibility for an observer at a looking at b, 0..1. Buildings block, trees and
+## smoke thin it out. Cells within 2 of either end are ignored so units can see out of
+## (and into) windows and past the wreck they shelter behind. Trees are different:
+## every tree cell on the line counts, so a wood 3+ cells deep cannot be seen or shot
+## through, and a man a few cells inside it is nearly invisible from outside. Only
+## the observer's own edge of the wood is open to him: standing in trees, the tree
+## cells next to him are free, so he can see and shoot out while staying hidden.
 func los(a: Vector3, b: Vector3) -> float:
 	var ca := world_to_cell(a)
 	var cb := world_to_cell(b)
 	if ca == cb:
 		return 1.0
+	var a_in_trees := cells[ca.y * W + ca.x] == T.TREES
 	var dx := absi(cb.x - ca.x)
 	var dy := -absi(cb.y - ca.y)
 	var sx := 1 if ca.x < cb.x else -1
@@ -496,11 +503,15 @@ func los(a: Vector3, b: Vector3) -> float:
 			y += sy
 		if x == cb.x and y == cb.y:
 			break
-		if maxi(absi(x - ca.x), absi(y - ca.y)) <= 2 or maxi(absi(x - cb.x), absi(y - cb.y)) <= 2:
-			continue
 		var i := y * W + x
-		vis *= los_keep[i]
-		if smoke_until[i] > now:
+		var near_a := maxi(absi(x - ca.x), absi(y - ca.y))
+		var near_b := maxi(absi(x - cb.x), absi(y - cb.y))
+		if cells[i] == T.TREES:
+			if not (a_in_trees and near_a <= 1):
+				vis *= los_keep[i]
+		elif near_a > 2 and near_b > 2:
+			vis *= los_keep[i]
+		if smoke_until[i] > now and near_a > 2 and near_b > 2:
 			vis *= 0.3
 		if vis < 0.1:
 			return 0.0
@@ -529,9 +540,19 @@ func shield_at(p: Vector3, from: Vector3) -> float:
 
 
 ## Cover for a target at p against a shooter at `from`: the better of the ground he is
-## in and whatever stands between them.
-func cover_from(p: Vector3, from: Vector3) -> float:
-	return maxf(cover_at(p), shield_at(p, from))
+## in and whatever stands between them. `front` is the direction the ground cover was
+## taken against (Unit.cover_front): a trench or a wood edge protects in full inside
+## Defs.COVER.flank_arc of it and only flank_keep of that from straight behind.
+## Buildings protect all round; walls and wrecks are directional by themselves.
+func cover_from(p: Vector3, from: Vector3, front := Vector3.ZERO) -> float:
+	var c := cover_at(p)
+	if front != Vector3.ZERO and c > 0.0 and type_at(p) != T.BUILDING:
+		var to := Vector3(from.x - p.x, 0.0, from.z - p.z)
+		if to.length() > 0.5:
+			var cos_arc := cos(float(Defs.COVER["flank_arc"]))
+			var t := clampf((cos_arc - to.normalized().dot(front)) / (cos_arc + 1.0), 0.0, 1.0)
+			c *= lerpf(1.0, float(Defs.COVER["flank_keep"]), t)
+	return maxf(c, shield_at(p, from))
 
 
 ## Where a shell aimed at a target inside a building really lands: the wall on the

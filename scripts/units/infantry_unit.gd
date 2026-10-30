@@ -138,13 +138,19 @@ func teleport(p: Vector3) -> void:
 	_place_in_cover()
 
 
+## The men took cover against `threat`: that is the way the ground cover faces.
+func cover_front() -> Vector3:
+	var to := Vector3(_cover_threat.x - position.x, 0.0, _cover_threat.z - position.z)
+	return to.normalized() if to.length() > 0.5 else super.cover_front()
+
+
 func conceal_value() -> float:
 	var c := super.conceal_value()
 	var low := 0.0
 	var n := 0
 	for s in members:
 		if s.alive:
-			low += s.prone * 0.12 + s.crouch * 0.05
+			low += s.prone * float(Defs.STEALTH["prone_bonus"]) + s.crouch * float(Defs.STEALTH["crouch_bonus"])
 			n += 1
 	return minf(0.95, c + (low / n if n > 0 else 0.0))
 
@@ -402,6 +408,8 @@ func _auto_tactics() -> void:
 		return
 	var fpv := incoming_fpv()
 	if fpv != null:
+		if cover_here() >= float(Defs.COVER["dodge_cover"]):
+			return  # dug in: stay down, running would only put the men in the open
 		var away := Vector3(position.x - fpv.position.x, 0.0, position.z - fpv.position.z)
 		away = away.normalized() if away.length() > 1.0 else _retreat_dir()
 		if _set_path(map.best_cover_near(position + away * 14.0, 4, {}, threat)):
@@ -852,6 +860,7 @@ func _sim_fire(dt: float) -> void:
 			s.cooldown = reload * randf_range(0.8, 1.3)
 			s.fired(battle.time)
 			last_fired = battle.time
+			last_fired_sig = float(w.get("signature", 1.0))
 		else:
 			s.cooldown = 0.6
 
@@ -929,7 +938,11 @@ func apply_blast(pos: Vector3, radius: float, lethal: float, supp: float, _pen: 
 		var d := away.length()
 		nearest = minf(nearest, d)
 		if d < radius:
-			var chance := lethal * (1.0 - d / radius) * (1.0 - map.cover_from(s.position, pos) * 0.65) * (0.6 + 0.4 * s.exposure())
+			# A shell from above still reaches into a trench; a rocket or tank round
+			# fired across the ground is stopped by the same cover that stops bullets.
+			var c := map.cover_from(s.position, pos, cover_front())
+			var keep := (1.0 - c * float(Defs.COVER["blast_top"])) if _top else pow(1.0 - c, float(Defs.COVER["hit_power"]))
+			var chance := lethal * (1.0 - d / radius) * keep * (0.6 + 0.4 * s.exposure())
 			if randf() < chance:
 				var force := (1.0 - d / radius) * radius
 				casualty(s, null, away.normalized() * force * 1.6, force * 0.9, randf() < WOUND_CHANCE_BLAST)
@@ -949,6 +962,7 @@ func apply_blast(pos: Vector3, radius: float, lethal: float, supp: float, _pen: 
 ## because the cover itself is falling on him — with the usual blast wound share,
 ## and a wounded man already on the floor can be crushed outright.
 func struck_by_collapse(area: Rect2, hit_chance: float) -> void:
+	battle.cause = "collapse"
 	for s in members:
 		if not area.has_point(Vector2(s.position.x, s.position.z)):
 			continue
@@ -960,6 +974,7 @@ func struck_by_collapse(area: Rect2, hit_chance: float) -> void:
 			_release(s)
 			s.expire()
 			battle.on_died_of_wounds(self)
+	battle.cause = ""
 
 
 func casualty(s: Soldier, shooter: Unit, knock: Vector3, up_speed: float, wounded := false) -> void:
@@ -976,7 +991,10 @@ func casualty(s: Soldier, shooter: Unit, knock: Vector3, up_speed: float, wounde
 	morale_hit(10.0)
 	suppression = minf(100.0, suppression + 12.0)
 	if not recounted:
-		battle.on_casualty(self)
+		battle.on_casualty(self, "fire:%s" % shooter.def_id if shooter != null else battle.cause)
+	if Game.has_arg("trace"):
+		var sh := "-" if shooter == null else "%s@%dm t%d" % [shooter.def_id, int(shooter.position.distance_to(s.position)), map.type_at(shooter.position)]
+		print("[%s] CAS %s %s t%d cov%.2f st%d prone%s by %s" % [battle.clock_text(battle.time), display_name, side, map.type_at(s.position), map.cover_at(s.position), state, "%.1f" % s.prone, sh])
 	if alive_count() == 0:
 		state = State.DESTROYED
 		battle.on_unit_lost(self)

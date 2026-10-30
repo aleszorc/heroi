@@ -50,7 +50,14 @@ var state := State.OK
 var panic_time := 0.0
 var since_suppressed := 99.0
 var last_fired := -99.0
+## Signature of the last shot (Defs.WEAPONS "signature"): how much it gave away.
+var last_fired_sig := 1.0
 var last_moved := -99.0
+## The post a unit was holding when it broke, and its facing; it goes back there
+## once the panic passes (INF / ZERO when there is none to go back to).
+var _post := Vector3.INF
+var _post_dir := Vector3.ZERO
+var _returning := false
 
 ## Spotting, indexed by observing side.
 var seen: Array[bool] = [false, false]
@@ -226,21 +233,29 @@ func cover_here() -> float:
 	return map.cover_at(position)
 
 
-## How hard this unit is to spot right now, 0..1.
+## How hard this unit is to spot right now, 0..1 (Defs.STEALTH).
 func conceal_value() -> float:
-	var c := map.conceal_at(position)
+	var st: Dictionary = Defs.STEALTH
+	var c: float = map.conceal_at(position) + float(def.get("stealth", 0.0))
 	var t := battle.time
 	if t - last_moved > 3.0:
-		c = minf(0.92, c + 0.12)
+		c = minf(0.92, c + float(st["still_bonus"]))
 	elif pace == Pace.RUN:
-		c *= 0.5
+		c *= float(st["run_factor"])
 	elif pace == Pace.SNEAK:
-		c = minf(0.92, c + 0.1)
-	if t - last_fired < 3.0:
-		c *= 0.35
+		c = minf(0.92, c + float(st["sneak_bonus"]))
+	if t - last_fired < float(st["fire_time"]):
+		# A rifle burst gives the position away; a lone suppressed shot far less.
+		c *= lerpf(1.0, float(st["fire_factor"]), last_fired_sig)
 	elif hold_fire:
-		c = minf(0.95, c + 0.15)
+		c = minf(0.95, c + float(st["ambush_bonus"]))
 	return c
+
+
+## Direction the unit's ground cover was taken against (BattleMap.cover_from);
+## ZERO when it has no facing yet.
+func cover_front() -> Vector3:
+	return guard_dir
 
 
 # --- State queries ---
@@ -275,6 +290,7 @@ static func yaw_to(v: Vector3) -> float:
 func order_move(target: Vector3) -> bool:
 	if not can_move():
 		return false
+	_post = Vector3.INF
 	return _set_path(target)
 
 
@@ -297,6 +313,7 @@ func _set_path(target: Vector3) -> bool:
 func order_fire(t: Unit) -> void:
 	if not is_targetable():
 		return
+	_post = Vector3.INF
 	_halt()
 	fire_target = t
 	hold_fire = false
@@ -306,12 +323,14 @@ func order_fire(t: Unit) -> void:
 func hold_position(dir := Vector3.ZERO) -> void:
 	if not is_targetable():
 		return
+	_post = Vector3.INF
 	_halt()
 	fire_target = null
 	_guard(dir)
 
 
 func order_stop() -> void:
+	_post = Vector3.INF
 	_halt()
 	fire_target = null
 
@@ -335,6 +354,7 @@ func _halt() -> void:
 	path = PackedVector3Array()
 	path_i = 0
 	arrived = true
+	_returning = false
 	if was_moving:
 		_take_cover()
 
@@ -348,7 +368,12 @@ func _reach_end() -> void:
 		_set_body_visible(false)
 		battle.on_unit_lost(self)
 		return
-	_guard()
+	# Back at the post it broke from: settle in facing the way it did before.
+	var back := _returning
+	_returning = false
+	if back:
+		_post = Vector3.INF
+	_guard(_post_dir if back else Vector3.ZERO)
 	_on_arrived()
 
 
@@ -400,7 +425,7 @@ func incoming_fpv() -> Drone:
 func receive_suppression(amount: float) -> void:
 	if not is_targetable():
 		return
-	var scale := 0.15 if is_vehicle else 1.0 - cover_here() * 0.35
+	var scale := 0.15 if is_vehicle else 1.0 - cover_here() * float(Defs.SUPPRESSION["unit_cover"])
 	suppression = minf(100.0, suppression + amount * scale)
 	since_suppressed = 0.0
 	_on_incoming(amount * scale)
@@ -412,8 +437,11 @@ func morale_hit(amount: float) -> void:
 
 func _update_morale(dt: float) -> void:
 	since_suppressed += dt
-	if since_suppressed > 1.5:
-		suppression = maxf(0.0, suppression - dt * (7.0 + 14.0 * cover_here()) * _supp_recover)
+	var recover := (7.0 + 14.0 * cover_here()) * _supp_recover
+	if since_suppressed <= 1.5:
+		# Still under fire: only men in cover keep their nerve, ducking between bursts.
+		recover *= cover_here() * float(Defs.SUPPRESSION["under_fire"])
+	suppression = maxf(0.0, suppression - dt * recover)
 	if state == State.DESTROYED or state == State.ROUTED:
 		return
 	if morale <= 12.0:
@@ -424,6 +452,7 @@ func _update_morale(dt: float) -> void:
 		if panic_time > 0.0:
 			return
 		suppression = minf(suppression, 55.0)
+		_rally()
 	# Good troops shrug off more fire before breaking.
 	var bonus := (morale - 60.0) * 0.3
 	var prev := state
@@ -442,17 +471,46 @@ func _update_morale(dt: float) -> void:
 		_on_recovered()
 
 
+## Breaking (Defs.PANIC): men never run across a field. With any real cover against
+## the threat they go to ground where they are; in the open they dash a few metres
+## to the best cover close by. The post they were holding is remembered (_rally).
 func _panic() -> void:
+	var pn: Dictionary = Defs.PANIC
 	state = State.PANICKED
-	panic_time = randf_range(7.0, 12.0)
+	panic_time = randf_range(float(pn["time_min"]), float(pn["time_max"]))
 	morale_hit(3.0)
 	fire_target = null
-	# In good cover men cower where they are; caught in the open they run for the rear.
-	if cover_here() >= 0.4:
+	if is_guarding() and _post == Vector3.INF:
+		_post = position
+		_post_dir = guard_dir
+	var threat_at := position + _threat_dir() * 30.0
+	if map.cover_from(position, threat_at, cover_front()) >= float(pn["stay_cover"]):
 		_halt()
 		return
-	var dest := map.best_cover_near(position + _retreat_dir() * 22.0, 4, {})
-	_set_path(dest)
+	var cells := maxi(1, int(round(float(pn["dash"]) / BattleMap.CELL)))
+	var dest := map.best_cover_near(position + _retreat_dir() * float(pn["dash"]) * 0.5, cells, {}, threat_at)
+	if map.cover_at(dest) > cover_here() + 0.1 and _set_path(dest):
+		return
+	_halt()
+
+
+## The panic has passed: a unit that broke from a post crawls back to it and takes
+## up its old facing again; one caught on the move just settles where it stopped.
+func _rally() -> void:
+	if _post == Vector3.INF:
+		if arrived and not guarding:
+			_guard()
+		return
+	if distance_to_point(_post) < 3.0:
+		_halt()
+		_guard(_post_dir)
+		_post = Vector3.INF
+	elif _set_path(_post):
+		_returning = true
+		pace = Pace.WALK
+	else:
+		_post = Vector3.INF
+		_guard()
 
 
 func _rout() -> void:
@@ -526,7 +584,10 @@ func pick_target(w: Dictionary, from: Vector3) -> Unit:
 		if is_guarding() and guard_dir != Vector3.ZERO:
 			var to := Vector3(u.position.x - position.x, 0.0, u.position.z - position.z).normalized()
 			if to.dot(guard_dir) < cos(GUARD_ARC):
-				score += 80.0
+				score += float(Defs.TARGETING["arc_out"])
+		if not u.is_vehicle:
+			# A lone man or a two-man team off in the distance is not worth the squad's fire.
+			score += float(Defs.TARGETING["small_team"]) * maxf(0.0, 3.0 - u.alive_count())
 		if u.is_vehicle:
 			if pen <= 0.0:
 				score += 400.0

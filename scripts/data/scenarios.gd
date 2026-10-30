@@ -6,8 +6,8 @@ extends RefCounted
 ## rules. The briefing is the menu blurb and dresses the deployment screen.
 
 ## Entry schema: {name, kind, seed, briefing}. "treeline" ignores the seed (the
-## hand-built mission keeps its own briefing); generated kinds rebuild the same
-## map and waves from kind+seed every time.
+## hand-built mission keeps its own briefing); generated kinds (defend, assault,
+## meeting, town) rebuild the same map, enemy plan and season from kind+seed every time.
 const ALL := [
 	{
 		"name": "Treeline 7",
@@ -50,5 +50,17 @@ const ALL := [
 		"kind": "meeting",
 		"seed": 17,
 		"briefing": "Duck-pond country, three crossroads, and enemy columns arriving all battle long. Hold the majority of the positions when time runs out against a force twice your size.",
+	},
+	{
+		"name": "Lypove",
+		"kind": "town",
+		"seed": 2,
+		"briefing": "A lime-tree village in high summer, sixteen houses on two cross streets. A probe tests the north first, then infantry comes in along both flanks and a tank column rolls down the main street. Hold two of the three positions; every wall is cover, every street a fire lane.",
+	},
+	{
+		"name": "Zelenyi Hai",
+		"kind": "town",
+		"seed": 3,
+		"briefing": "Half-ruined already, and the enemy comes straight down the main street in the first minute. Stop the rush at the church, then watch the eastern corner for the dismounted column that follows.",
 	},
 ]

@@ -31,7 +31,10 @@ var time := 0.0
 const TIME_CAP := 600.0
 var time_limit := TIME_CAP
 var deploy_rect := Rect2()
-var stats := {"men_lost": [0, 0], "men_total": [0, 0], "vehicles_lost": [0, 0], "died_of_wounds": [0, 0]}
+var stats := {"men_lost": [0, 0], "men_total": [0, 0], "vehicles_lost": [0, 0], "died_of_wounds": [0, 0], "causes": [{}, {}]}
+## What is hurting people right now, for the dev casualty tally: "fire:<unit>" for
+## aimed shots, else the label of the blast being applied (arty, fpv, bomb, ...).
+var cause := ""
 
 var _scheduled: Array = []
 var _probe := false
@@ -396,10 +399,12 @@ func mark_seen(u: Unit, obs: int) -> void:
 
 ## Explosion: casualties and suppression around pos, armour damage for vehicles close in,
 ## and structural damage to buildings when struct_power > 0.
-func blast(pos: Vector3, radius: float, lethal: float, supp: float, pen: float, top: bool, struct_power := 0.0, struct_radius := 0.0) -> void:
+func blast(pos: Vector3, radius: float, lethal: float, supp: float, pen: float, top: bool, struct_power := 0.0, struct_radius := 0.0, label := "blast") -> void:
+	cause = label
 	for u in units:
 		if u.is_targetable():
 			u.apply_blast(pos, radius, lethal, supp, pen, top)
+	cause = ""
 	if struct_power > 0.0:
 		for b in buildings:
 			if b.near(pos, struct_radius):
@@ -458,8 +463,10 @@ func notify_msg(text: String, color: Color) -> void:
 	message.emit(text, color)
 
 
-func on_casualty(u: Unit) -> void:
+func on_casualty(u: Unit, how := "") -> void:
 	stats["men_lost"][u.side] += 1
+	var tally: Dictionary = stats["causes"][u.side]
+	tally[how] = int(tally.get(how, 0)) + 1
 	for o in units:
 		if o != u and o.side == u.side and o.is_targetable() and o.position.distance_to(u.position) < 35.0:
 			o.morale_hit(2.0)
@@ -529,6 +536,8 @@ func _finish(victory: bool, reason: String) -> void:
 	var cas := _casualty_breakdown(Game.UA)
 	var summary := "%s\n\nYour losses: %d of %d men, %d vehicles\n   killed %d, wounded %d (%d treated)\nEnemy losses: %d of %d men, %d vehicles\nTime: %s" % [
 		reason, lost[0], total[0], veh[0], cas[0], cas[1], cas[2], lost[1], total[1], veh[1], clock_text(time)]
+	if Game.has_arg("log"):
+		print("UA casualties by cause: ", stats["causes"][Game.UA], "\nRU casualties by cause: ", stats["causes"][Game.RU])
 	ended.emit(victory, "VICTORY" if victory else "DEFEAT", summary)
 
 

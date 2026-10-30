@@ -11,6 +11,7 @@ static func build() -> Dictionary:
 	return {
 		"kind": "defend",
 		"seed": 0,
+		"season": "autumn",
 		"title": "TREELINE 7",
 		"briefing": "Zaporizhzhia direction, autumn. Your platoon holds a shell-torn treeline, a ruined farm and the crossroads behind them. Drone recon reports armour massing to the north. Hold at least two of the three positions for 10 minutes.\n\nTrees and trenches hide you; firing and moving give you away. Enemy FPV drones hunt anything they can see.",
 		"time_limit": 600.0,

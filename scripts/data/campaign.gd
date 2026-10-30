@@ -57,7 +57,7 @@ static func generate(cseed: int) -> Dictionary:
 		var count := 1 if i == n - 1 else (2 if rng.randf() < 0.7 else 1)
 		var opts: Array = []
 		for k in count:
-			var kind := "assault" if (i == n - 1 or rng.randf() < 0.6) else "meeting"
+			var kind := "assault" if (i == n - 1 or rng.randf() < 0.5) else ("town" if rng.randf() < 0.4 else "meeting")
 			opts.append({"name": names[ni], "kind": kind, "seed": rng.randi_range(0, 999999)})
 			ni += 1
 		steps.append({"options": opts, "chosen": -1})
@@ -173,10 +173,10 @@ static func dress_mission(mission: Dictionary, state: Dictionary) -> void:
 	var pending: Dictionary = state["pending"]
 	var sector := String(pending["name"])
 	var kind := String(pending["kind"])
-	var titles := {"assault": "TAKE %s", "meeting": "RACE FOR %s", "defend": "HOLD %s"}
-	mission["title"] = String(titles[kind]) % sector.to_upper()
+	var titles := {"assault": "TAKE %s", "meeting": "RACE FOR %s", "defend": "HOLD %s", "town": "HOLD %s"}
+	mission["title"] = String(titles.get(kind, "BATTLE AT %s")) % sector.to_upper()
 	var lead := "Operation %s, battle %d. " % [String(state["op_name"]).capitalize(), geti(state, "battle_n") + 1]
-	lead += "The ground at %s was taken — now comes the counterattack." % sector if kind == "defend" \
+	lead += "The ground at %s was taken — now comes the counterattack." % sector if kind == "defend" or kind == "town" \
 			else "The front runs to %s." % sector
 	mission["briefing"] = lead + "\n\n" + String(mission["briefing"])
 	var base: Array = mission["ua_units"]
@@ -402,21 +402,52 @@ static func buy_unit(state: Dictionary, id: String) -> bool:
 	return true
 
 
+## Disbanding (GDD §2b.3): the unit leaves the roster and refunds `disband_refund` of
+## its purchase price (rounded down); the men bought into it refund nothing. Its
+## survivors are not fallen, so they do not go to the memorial. The last unit can
+## never be disbanded — the player must keep one deployable unit.
+static func disband_refund(id: String) -> int:
+	return int(floor(geti(Defs.CAMPAIGN["cost_unit"], id) * float(Defs.CAMPAIGN["disband_refund"])))
+
+
+static func can_disband(state: Dictionary) -> bool:
+	return (state["roster"] as Array).size() > 1
+
+
+## Removes `entry` from the roster and refunds part of its price. Returns false
+## when it is the last unit or not on the roster.
+static func disband_unit(state: Dictionary, entry: Dictionary) -> bool:
+	var roster: Array = state["roster"]
+	var ri := roster.find(entry)
+	if ri < 0 or not can_disband(state):
+		return false
+	roster.remove_at(ri)
+	state["requisition"] = geti(state, "requisition") + disband_refund(String(entry["id"]))
+	save_state(state)
+	return true
+
+
+## The lowest free name of the unit's kind ("3rd Squad", "MG Team 2"), so a unit
+## bought after a disband does not duplicate a surviving one's name.
 static func _reinforcement_name(state: Dictionary, id: String) -> String:
-	var same := 0
+	var used := {}
 	for entry: Dictionary in state["roster"]:
-		if String(entry["id"]) == id:
-			same += 1
+		used[String(entry["name"])] = true
 	var base := String((Defs.UNITS[id] as Dictionary)["name"])
-	if id == "ua_rifle":
-		var n := same + 1
-		var suffix := "th"
-		match n:
-			1: suffix = "st"
-			2: suffix = "nd"
-			3: suffix = "rd"
-		return "%d%s Squad" % [n, suffix]
-	return base if same == 0 else "%s %d" % [base, same + 1]
+	for n in range(1, 100):
+		var candidate: String
+		if id == "ua_rifle":
+			var suffix := "th"
+			match n:
+				1: suffix = "st"
+				2: suffix = "nd"
+				3: suffix = "rd"
+			candidate = "%d%s Squad" % [n, suffix]
+		else:
+			candidate = base if n == 1 else "%s %d" % [base, n]
+		if not used.has(candidate):
+			return candidate
+	return base
 
 
 # --- Small helpers ---

@@ -33,9 +33,19 @@ class Builder:
 		st.set_smooth_group(-1)
 
 	func add(prim: PrimitiveMesh, xf: Transform3D, color: Color) -> void:
-		var arrays := prim.get_mesh_arrays()
+		add_arrays(prim.get_mesh_arrays(), xf, color)
+
+	## Any mesh's first surface (a PrimitiveMesh or a baked ArrayMesh) in one colour.
+	func add_mesh(mesh: Mesh, xf: Transform3D, color: Color) -> void:
+		if mesh is PrimitiveMesh:
+			add_arrays((mesh as PrimitiveMesh).get_mesh_arrays(), xf, color)
+		else:
+			add_arrays(mesh.surface_get_arrays(0), xf, color)
+
+	func add_arrays(arrays: Array, xf: Transform3D, color: Color) -> void:
 		var verts: PackedVector3Array = arrays[Mesh.ARRAY_VERTEX]
-		var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX]
+		# A SurfaceTool-built mesh carries no index array.
+		var idx: PackedInt32Array = arrays[Mesh.ARRAY_INDEX] if arrays[Mesh.ARRAY_INDEX] != null else PackedInt32Array()
 		var t := base * xf
 		st.set_color(color.lerp(tint, tint_amount))
 		if bone >= 0:
@@ -788,16 +798,40 @@ static func _bradley(h: Builder, t: Builder) -> Dictionary:
 
 # --- Scenery ---
 
+## Crown colours per season and tree variant (poplar, locust, maple): summer
+## greens, autumn gold and rust. Winter and the mud season draw bare branches.
+const LEAF := {
+	"summer": [Color(0.30, 0.44, 0.20), Color(0.36, 0.46, 0.22), Color(0.28, 0.42, 0.19)],
+	"autumn": [Color(0.55, 0.50, 0.20), Color(0.50, 0.43, 0.19), Color(0.50, 0.34, 0.17)],
+}
+const BUSH_LEAF := {
+	"summer": [Color(0.30, 0.42, 0.19), Color(0.36, 0.44, 0.20)],
+	"autumn": [Color(0.36, 0.37, 0.20), Color(0.42, 0.38, 0.20)],
+}
+const TWIG := Color(0.30, 0.26, 0.22)
+
+
+static func bare_season(season: String) -> bool:
+	return season == "winter" or season == "mud"
+
+
 ## Windbreak trees at real posadka scale (8-15 m with instance scaling), so they tower
 ## over the 25%-oversize soldiers the way a treeline should. Variant 0 is a Lombardy
 ## poplar column (~11.5 m), 1 a broad black-locust acacia (~8.7 m), 2 a rounded field
-## maple (~7.7 m), 3 a shell-shattered stump (~3.9 m).
-static func tree(variant: int) -> ArrayMesh:
-	var key := "tree_%d" % variant
+## maple (~7.7 m), 3 a shell-shattered stump (~3.9 m). `season` picks the crown:
+## leafy and coloured in summer and autumn, bare branches in winter and mud.
+static func tree(variant: int, season := "autumn") -> ArrayMesh:
+	var key := "tree_%d_%s" % [variant, season]
 	if _cache.has(key):
 		return _cache[key]
 	var b := Builder.new()
 	var bark := Color(0.27, 0.22, 0.17)
+	var leaves: Array = LEAF.get(season, LEAF["autumn"])
+	if bare_season(season) and variant != 3:
+		_bare_tree(b, variant, bark)
+		var bare := b.build()
+		_cache[key] = bare
+		return bare
 	match variant:
 		3:
 			# Snapped bole with splintered top and two hanging broken limbs.
@@ -808,14 +842,14 @@ static func tree(variant: int) -> ArrayMesh:
 			b.cyl(0.04, 0.08, 1.4, Vector3(-0.6, 2.9, 0.3), bark, Vector3(0.5, 0.0, 0.8), 5)
 		0:
 			# Lombardy poplar: the classic windbreak column.
-			var leaf := Color(0.40, 0.41, 0.20)
+			var leaf: Color = leaves[0]
 			b.cyl(0.14, 0.26, 3.4, Vector3(0.0, 1.7, 0.0), bark)
 			b.ball(1.45, Vector3(0.0, 4.9, 0.0), leaf, Vector3(1.0, 1.75, 1.0), 7, 4)
 			b.ball(1.2, Vector3(0.15, 7.6, -0.1), leaf.lightened(0.05), Vector3(0.95, 1.7, 0.95), 6, 3)
 			b.ball(0.8, Vector3(-0.1, 10.0, 0.08), leaf.darkened(0.04), Vector3(0.9, 1.9, 0.9), 6, 3)
 		1:
 			# Black locust (acacia): tall bare trunk, broad loose crown.
-			var leaf := Color(0.50, 0.43, 0.19)
+			var leaf: Color = leaves[1]
 			b.cyl(0.16, 0.3, 4.6, Vector3(0.0, 2.3, 0.0), bark)
 			b.cyl(0.08, 0.14, 2.2, Vector3(0.7, 4.8, 0.3), bark, Vector3(0.15, 0.0, -0.5), 5)
 			b.ball(2.0, Vector3(0.0, 6.0, 0.0), leaf, Vector3(1.05, 0.9, 1.0), 7, 4)
@@ -823,7 +857,7 @@ static func tree(variant: int) -> ArrayMesh:
 			b.ball(1.3, Vector3(-1.2, 7.0, -0.5), leaf.darkened(0.07), Vector3.ONE, 6, 3)
 		_:
 			# Field maple / young acacia: rounded crown on a short trunk.
-			var leaf := Color(0.34, 0.37, 0.21)
+			var leaf: Color = leaves[2]
 			b.cyl(0.13, 0.24, 3.8, Vector3(0.0, 1.9, 0.0), bark)
 			b.ball(1.8, Vector3(0.0, 5.3, 0.0), leaf, Vector3(1.0, 0.95, 1.0), 7, 4)
 			b.ball(1.3, Vector3(0.9, 6.4, 0.4), leaf.lightened(0.06), Vector3.ONE, 6, 3)
@@ -831,6 +865,72 @@ static func tree(variant: int) -> ArrayMesh:
 	var mesh := b.build()
 	_cache[key] = mesh
 	return mesh
+
+
+## Leafless winter tree: the same trunk, then a fan of branch cylinders ending in
+## small dark twig masses that keep the crown's silhouette from a distance.
+static func _bare_tree(b: Builder, variant: int, bark: Color) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 400 + variant
+	var twig := TWIG
+	match variant:
+		0:
+			# Poplar: near-vertical branches hugging a tall column.
+			b.cyl(0.12, 0.26, 7.0, Vector3(0.0, 3.5, 0.0), bark)
+			for i in 7:
+				var a := i * TAU / 7.0 + rng.randf_range(-0.3, 0.3)
+				var r := rng.randf_range(0.35, 0.7)
+				var len := rng.randf_range(4.5, 7.0)
+				var base_y := rng.randf_range(2.6, 4.2)
+				var tilt := rng.randf_range(0.07, 0.16)
+				var dir := Vector3(cos(a) * sin(tilt), cos(tilt), sin(a) * sin(tilt))
+				var from := Vector3(cos(a) * r, base_y, sin(a) * r)
+				_limb(b, from, dir, len, 0.09, 0.03, bark.lightened(0.05))
+				b.ball(rng.randf_range(0.35, 0.55), from + dir * len * 0.9, twig, Vector3(0.8, 1.6, 0.8), 5, 2)
+		1:
+			# Black locust: tall trunk splitting into a few long crooked limbs.
+			b.cyl(0.16, 0.3, 4.8, Vector3(0.0, 2.4, 0.0), bark)
+			for i in 5:
+				var a := i * TAU / 5.0 + rng.randf_range(-0.4, 0.4)
+				var len := rng.randf_range(2.8, 4.0)
+				var tilt := rng.randf_range(0.45, 0.75)
+				var dir := Vector3(cos(a) * sin(tilt), cos(tilt), sin(a) * sin(tilt))
+				_limb(b, Vector3(0.0, 4.6, 0.0), dir, len, 0.12, 0.03, bark)
+				_twigs(b, rng, Vector3(0.0, 4.6, 0.0) + dir * len, dir, 1.3, twig, bark)
+		_:
+			# Field maple: short trunk, a round fan of limbs.
+			b.cyl(0.13, 0.24, 3.6, Vector3(0.0, 1.8, 0.0), bark)
+			for i in 6:
+				var a := i * TAU / 6.0 + rng.randf_range(-0.3, 0.3)
+				var len := rng.randf_range(2.2, 3.2)
+				var tilt := rng.randf_range(0.5, 0.9)
+				var dir := Vector3(cos(a) * sin(tilt), cos(tilt), sin(a) * sin(tilt))
+				_limb(b, Vector3(0.0, 3.4, 0.0), dir, len, 0.11, 0.03, bark)
+				_twigs(b, rng, Vector3(0.0, 3.4, 0.0) + dir * len, dir, 1.1, twig, bark)
+
+
+## Branch tip: two or three thin twigs fanning on from the limb, each ending in a
+## small dark twig mass, so a bare crown reads as a lattice rather than boulders.
+static func _twigs(b: Builder, rng: RandomNumberGenerator, tip: Vector3, dir: Vector3, len: float, twig: Color, bark: Color) -> void:
+	for k in 3:
+		var side := dir.cross(Vector3.UP if absf(dir.y) < 0.9 else Vector3.RIGHT).normalized()
+		var d2 := (dir + side * rng.randf_range(-0.8, 0.8) + Vector3.UP * rng.randf_range(0.2, 0.6)).normalized()
+		var l := len * rng.randf_range(0.7, 1.1)
+		_limb(b, tip, d2, l, 0.04, 0.015, bark.lightened(0.08))
+		b.ball(rng.randf_range(0.3, 0.45), tip + d2 * l, twig, Vector3(1.0, 0.8, 1.0), 4, 2)
+
+
+## A tapered limb from `from` along unit `dir`, thick at the base.
+static func _limb(b: Builder, from: Vector3, dir: Vector3, len: float, r0: float, r1: float, color: Color) -> void:
+	var m := CylinderMesh.new()
+	m.top_radius = r1
+	m.bottom_radius = r0
+	m.height = len
+	m.radial_segments = 4
+	m.rings = 0
+	var side := dir.cross(Vector3.RIGHT if absf(dir.x) < 0.9 else Vector3.FORWARD).normalized()
+	var basis := Basis(side, dir, side.cross(dir))
+	b.add(m, Transform3D(basis, from + dir * len * 0.5), color)
 
 
 static func pole() -> ArrayMesh:
@@ -845,28 +945,55 @@ static func pole() -> ArrayMesh:
 	return mesh
 
 
-static func sandbags() -> ArrayMesh:
-	if _cache.has("sandbags"):
-		return _cache["sandbags"]
+const SANDBAG_VARIANTS := 4
+
+
+## Sandbag fieldworks, built along local X, standing on y = 0: 0 a parapet run of
+## two courses (3 + 2, ~1.9 m), 1 a firing-bay stack three courses high, 2 a single
+## dropped bag, 3 a low single-course run (parados, revetment). Bags are slightly
+## uneven in size, yaw and colour so a line of them never reads as one box.
+static func sandbags(variant := 0) -> ArrayMesh:
+	var key := "sandbags_%d" % variant
+	if _cache.has(key):
+		return _cache[key]
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 77 + variant
 	var b := Builder.new()
-	var bag := Color(0.55, 0.5, 0.38)
-	for i in 3:
-		b.box(Vector3(0.62, 0.25, 0.4), Vector3(-0.66 + i * 0.66, 0.12, 0.0), bag.darkened(i * 0.04))
-	for i in 2:
-		b.box(Vector3(0.62, 0.25, 0.4), Vector3(-0.33 + i * 0.66, 0.37, 0.0), bag.darkened(0.06))
+	var bag := Color(0.55, 0.50, 0.38)
+	var courses: Array = [[3, 2], [3, 2, 3], [1], [3]][variant]
+	var y := 0.12
+	for ci in courses.size():
+		var n: int = courses[ci]
+		var x0 := -(n - 1) * 0.33
+		for i in n:
+			var sz := Vector3(rng.randf_range(0.58, 0.66), rng.randf_range(0.23, 0.26), rng.randf_range(0.38, 0.44))
+			var col := bag.darkened(rng.randf_range(0.0, 0.1)).lerp(Color(0.48, 0.42, 0.30), rng.randf_range(0.0, 0.3))
+			var pos := Vector3(x0 + i * 0.66 + rng.randf_range(-0.02, 0.02), y + (sz.y - 0.25) * 0.5, rng.randf_range(-0.03, 0.03))
+			b.box(sz, pos, col, Vector3(0.0, rng.randf_range(-0.1, 0.1), 0.0))
+		y += 0.24
 	var mesh := b.build()
-	_cache["sandbags"] = mesh
+	_cache[key] = mesh
 	return mesh
 
 
-static func bush() -> ArrayMesh:
-	if _cache.has("bush"):
-		return _cache["bush"]
+static func bush(season := "autumn") -> ArrayMesh:
+	var key := "bush_%s" % season
+	if _cache.has(key):
+		return _cache[key]
 	var b := Builder.new()
-	b.ball(0.85, Vector3(0.0, 0.5, 0.0), Color(0.36, 0.37, 0.2), Vector3(1.0, 0.75, 1.0), 5)
-	b.ball(0.6, Vector3(0.6, 0.4, 0.25), Color(0.42, 0.38, 0.2), Vector3(1.0, 0.72, 1.0), 5)
+	if bare_season(season):
+		# A leafless thicket: dark twig masses over a few bare stems.
+		var bark := Color(0.27, 0.22, 0.17)
+		b.cyl(0.02, 0.05, 0.9, Vector3(0.0, 0.45, 0.0), bark, Vector3.ZERO, 4)
+		b.cyl(0.02, 0.04, 0.8, Vector3(0.45, 0.4, 0.2), bark, Vector3(0.1, 0.0, -0.3), 4)
+		b.ball(0.7, Vector3(0.0, 0.6, 0.0), TWIG, Vector3(1.0, 0.7, 1.0), 5)
+		b.ball(0.5, Vector3(0.55, 0.5, 0.25), TWIG.darkened(0.08), Vector3(1.0, 0.7, 1.0), 5)
+	else:
+		var leaf: Array = BUSH_LEAF.get(season, BUSH_LEAF["autumn"])
+		b.ball(0.85, Vector3(0.0, 0.5, 0.0), leaf[0], Vector3(1.0, 0.75, 1.0), 5)
+		b.ball(0.6, Vector3(0.6, 0.4, 0.25), leaf[1], Vector3(1.0, 0.72, 1.0), 5)
 	var mesh := b.build()
-	_cache["bush"] = mesh
+	_cache[key] = mesh
 	return mesh
 
 

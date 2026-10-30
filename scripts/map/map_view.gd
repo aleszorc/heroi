@@ -8,9 +8,27 @@ const BOARD_DEPTH := 2.0
 ## meshes, so a blast rebuilds at most four small meshes, never the whole ground.
 const CHUNK := 12
 
-## Crater colouring: charred at the scorched centre, dark wet mud at the lip and rim.
 ## Spoil dirt thrown up around trenches: churned mud fading out over ~2 cells.
 const TRENCH_DIRT := Color(0.24, 0.185, 0.125)
+
+## Ground palette per season. `open` and `field` carry two tones each (the field's
+## alternate by row as plough or stubble stripes). Summer is green steppe under ripe
+## grain, autumn the olive-and-ochre late steppe with yellow-brown stubble, winter a
+## snow cover with dirty churned roads, mud the dark rasputitsa with dead grass.
+const GROUND := {
+	"summer": {"open": [Color(0.38, 0.46, 0.24), Color(0.41, 0.47, 0.25)], "field": [Color(0.58, 0.50, 0.26), Color(0.53, 0.46, 0.24)],
+		"road": Color(0.48, 0.43, 0.34), "trees": Color(0.27, 0.34, 0.18), "building": Color(0.33, 0.31, 0.28), "trench": Color(0.21, 0.16, 0.11),
+		"gully": Color(0.33, 0.40, 0.22), "crater": Color(0.19, 0.15, 0.11), "rubble": Color(0.40, 0.37, 0.33), "wreck": Color(0.22, 0.20, 0.18)},
+	"autumn": {"open": [Color(0.42, 0.44, 0.28), Color(0.45, 0.45, 0.29)], "field": [Color(0.50, 0.42, 0.24), Color(0.44, 0.37, 0.22)],
+		"road": Color(0.46, 0.41, 0.33), "trees": Color(0.30, 0.32, 0.20), "building": Color(0.33, 0.31, 0.28), "trench": Color(0.21, 0.16, 0.11),
+		"gully": Color(0.34, 0.36, 0.23), "crater": Color(0.19, 0.15, 0.11), "rubble": Color(0.40, 0.37, 0.33), "wreck": Color(0.22, 0.20, 0.18)},
+	"winter": {"open": [Color(0.80, 0.82, 0.86), Color(0.76, 0.78, 0.83)], "field": [Color(0.72, 0.72, 0.73), Color(0.80, 0.81, 0.85)],
+		"road": Color(0.46, 0.43, 0.40), "trees": Color(0.62, 0.63, 0.63), "building": Color(0.42, 0.40, 0.38), "trench": Color(0.21, 0.16, 0.11),
+		"gully": Color(0.66, 0.68, 0.71), "crater": Color(0.19, 0.15, 0.11), "rubble": Color(0.56, 0.54, 0.51), "wreck": Color(0.22, 0.20, 0.18)},
+	"mud": {"open": [Color(0.34, 0.32, 0.20), Color(0.37, 0.34, 0.21)], "field": [Color(0.27, 0.21, 0.15), Color(0.24, 0.19, 0.14)],
+		"road": Color(0.30, 0.26, 0.21), "trees": Color(0.25, 0.25, 0.16), "building": Color(0.31, 0.29, 0.26), "trench": Color(0.19, 0.145, 0.10),
+		"gully": Color(0.26, 0.26, 0.17), "crater": Color(0.17, 0.13, 0.10), "rubble": Color(0.38, 0.35, 0.31), "wreck": Color(0.22, 0.20, 0.18)},
+}
 
 ## Crater meshes merge instead of stacking: a new hole whose centre is closer than
 ## CRATER_MERGE x the summed rim radii to a live crater would interpenetrate rim
@@ -25,6 +43,8 @@ const CRATER_TONE_STEP := 0.94
 const CRATER_TONE_MIN := 0.72
 
 var _map: BattleMap
+var _season := "summer"
+var _palette: Dictionary = GROUND["summer"]
 var _chunks: Array[MeshInstance3D] = []
 ## Per-corner spoil-dirt strength around trench cells, built once (trenches never
 ## change at runtime). Indexed like crater_depth: y * (W + 1) + x.
@@ -42,11 +62,16 @@ var _craters: Array = []
 
 func build(map: BattleMap, mission: Dictionary) -> void:
 	_map = map
+	_season = String(mission.get("season", "summer"))
+	_palette = GROUND.get(_season, GROUND["summer"])
 	_build_trench_dirt(map)
 	_build_ground(map)
 	_build_board()
 	_build_trees(map)
 	_build_scatter(map)
+	# Dug-in positions face the enemy: south when the player attacks north-held
+	# trenches, north everywhere else.
+	_build_fieldworks(map, Vector2i(0, 1) if String(mission.get("kind", "")) == "assault" else Vector2i(0, -1))
 	for w: Array in mission.get("wrecks", []):
 		var kind: String = w[0]
 		var pos: Vector3 = w[1]
@@ -72,24 +97,24 @@ func build(map: BattleMap, mission: Dictionary) -> void:
 func _ground_color(t: int, x: int, y: int) -> Color:
 	match t:
 		BattleMap.T.FIELD:
-			return Color(0.40, 0.33, 0.24) if y % 2 == 0 else Color(0.35, 0.29, 0.21)
+			return _palette["field"][y % 2]
 		BattleMap.T.ROAD:
-			return Color(0.46, 0.41, 0.33)
+			return _palette["road"]
 		BattleMap.T.TREES:
-			return Color(0.30, 0.32, 0.20)
+			return _palette["trees"]
 		BattleMap.T.BUILDING:
-			return Color(0.33, 0.31, 0.28)
+			return _palette["building"]
 		BattleMap.T.TRENCH:
-			return Color(0.21, 0.16, 0.11)
+			return _palette["trench"]
 		BattleMap.T.GULLY:
-			return Color(0.34, 0.36, 0.23)
+			return _palette["gully"]
 		BattleMap.T.CRATER:
-			return Color(0.19, 0.15, 0.11)
+			return _palette["crater"]
 		BattleMap.T.RUBBLE:
-			return Color(0.40, 0.37, 0.33)
+			return _palette["rubble"]
 		BattleMap.T.WRECK:
-			return Color(0.22, 0.20, 0.18)
-	return Color(0.42, 0.44, 0.28) if (x + y) % 7 != 0 else Color(0.45, 0.45, 0.29)
+			return _palette["wreck"]
+	return _palette["open"][0] if (x + y) % 7 != 0 else _palette["open"][1]
 
 
 func _build_ground(map: BattleMap) -> void:
@@ -323,14 +348,13 @@ func _build_trees(map: BattleMap) -> void:
 			var basis := Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3(s, s * rng.randf_range(0.9, 1.15), s))
 			xforms[v].append(Transform3D(basis, p))
 	for v in 4:
-		_multimesh(MeshFactory.tree(v), xforms[v])
+		_multimesh(MeshFactory.tree(v, _season), xforms[v])
 
 
 func _build_scatter(map: BattleMap) -> void:
 	var rng := RandomNumberGenerator.new()
 	rng.seed = 99
 	var bushes: Array = []
-	var bags: Array = []
 	for y in BattleMap.H:
 		for x in BattleMap.W:
 			var t: int = map.cells[y * BattleMap.W + x]
@@ -340,11 +364,6 @@ func _build_scatter(map: BattleMap) -> void:
 				p.y = map.height_at(p)
 				var s := rng.randf_range(0.7, 1.4)
 				bushes.append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU).scaled(Vector3.ONE * s), p))
-			elif t == BattleMap.T.TRENCH and y > 0 and map.cells[(y - 1) * BattleMap.W + x] != BattleMap.T.TRENCH and rng.randf() < 0.6:
-				# Parapet on the spoil-berm crest along the enemy-facing lip.
-				var q := p + Vector3(0.0, 0.0, -3.0)
-				q.y = map.height_at(q) + 0.02
-				bags.append(Transform3D(Basis(Vector3.UP, rng.randf_range(-0.15, 0.15)), q))
 			elif t == BattleMap.T.CRATER:
 				# Every dimpled CRATER cell gets the same crater object runtime blasts
 				# use, so pre-war shelling and fresh hits are one system; where the
@@ -352,9 +371,8 @@ func _build_scatter(map: BattleMap) -> void:
 				# bowls on top of each other.
 				p += Vector3(rng.randf_range(-0.6, 0.6), 0.0, rng.randf_range(-0.6, 0.6))
 				_add_crater(p, rng.randi() % MeshFactory.CRATER_VARIANTS, rng.randf_range(0.7, 1.0), rng)
-	_bush_mm = _multimesh(MeshFactory.bush(), bushes)
+	_bush_mm = _multimesh(MeshFactory.bush(_season), bushes)
 	_bush_xf = bushes
-	_multimesh(MeshFactory.sandbags(), bags)
 	# One multimesh per crater variant; instance colors carry per-hole tone.
 	var per_variant: Array = []
 	for v in MeshFactory.CRATER_VARIANTS:
@@ -372,6 +390,73 @@ func _build_scatter(map: BattleMap) -> void:
 		for i in recs.size():
 			recs[i]["mm"] = mm
 			recs[i]["idx"] = i
+
+
+## Sandbag fieldworks on the trenches, from the cut's own geometry. Along every lip
+## that faces open ground: a two-course parapet on the berm crest of the enemy-facing
+## lip, with a three-course firing bay every few metres; a thinner single-course
+## parados behind; a bag wall capping each open trench end; now and then a stack
+## revetting the inner face at floor level, and a few bags dropped on the spoil.
+## Four MultiMeshes (one per bag variant) with per-instance tone.
+func _build_fieldworks(map: BattleMap, fire: Vector2i) -> void:
+	var rng := RandomNumberGenerator.new()
+	rng.seed = 4242
+	var xf: Array = [[], [], [], []]
+	var tone: Array = [[], [], [], []]
+	var c := BattleMap.CELL
+	var edges: Array[Vector2i] = [Vector2i(0, -1), Vector2i(1, 0), Vector2i(0, 1), Vector2i(-1, 0)]
+	for y in BattleMap.H:
+		for x in BattleMap.W:
+			if map.cells[y * BattleMap.W + x] != BattleMap.T.TRENCH:
+				continue
+			var cell := Vector2i(x, y)
+			var centre := map.cell_to_world(cell)
+			var open: Array[Vector2i] = []
+			for e in edges:
+				var n := cell + e
+				if not map.in_bounds(n) or map.cells[n.y * BattleMap.W + n.x] != BattleMap.T.TRENCH:
+					open.append(e)
+			var is_end := open.size() >= 3
+			for e in open:
+				var out := Vector3(e.x, 0.0, e.y)
+				# A run of bags lies along the edge, so it is turned 90 degrees for
+				# east/west edges; local +X maps onto the lip direction.
+				var yaw := (0.0 if e.y != 0 else PI * 0.5) + rng.randf_range(-0.1, 0.1)
+				var variant := -1
+				var dist := 0.32
+				if e == fire:
+					if rng.randf() < 0.92:
+						variant = 1 if (x + y) % 3 == 0 and rng.randf() < 0.7 else 0
+				elif e == -fire:
+					if rng.randf() < 0.45:
+						variant = 3 if rng.randf() < 0.7 else 0
+				elif is_end:
+					if rng.randf() < 0.85:
+						variant = 0
+				elif rng.randf() < 0.25:
+					variant = 3
+				if variant >= 0:
+					var q := centre + out * (c * 0.5 + dist)
+					q.y = map.height_at(q) + 0.02
+					xf[variant].append(Transform3D(Basis(Vector3.UP, yaw), q))
+					tone[variant].append(rng.randf_range(0.86, 1.08))
+				if e == fire and rng.randf() < 0.28:
+					# Revetment stacked against the inner face of the fire-side wall.
+					var q := centre + out * (c * 0.5 - 0.24)
+					q.y = -BattleMap.TRENCH_DEPTH + 0.02
+					xf[3].append(Transform3D(Basis(Vector3.UP, yaw), q))
+					tone[3].append(rng.randf_range(0.8, 0.95))
+				if rng.randf() < 0.18:
+					# A bag that rolled off the parapet onto the spoil.
+					var q := centre + out * (c * 0.5 + rng.randf_range(0.7, 1.6)) + Vector3(rng.randf_range(-0.8, 0.8), 0.0, 0.0).rotated(Vector3.UP, yaw)
+					q.y = map.height_at(q) + 0.02
+					xf[2].append(Transform3D(Basis(Vector3.UP, rng.randf() * TAU), q))
+					tone[2].append(rng.randf_range(0.8, 1.05))
+	for v in MeshFactory.SANDBAG_VARIANTS:
+		var cols: Array = []
+		for t: float in tone[v]:
+			cols.append(Color(t, t, t))
+		_multimesh(MeshFactory.sandbags(v), xf[v], cols)
 
 
 ## A fresh shell-hole mesh at runtime, sized by the blast that dug it. When the hit
