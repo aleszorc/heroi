@@ -86,7 +86,7 @@ func setup_bomber(b: Battle, s: int, start: Vector3, t: Unit) -> void:
 	altitude = BOMBER_ALT
 	speed = BOMBER_SPEED
 	_home = start
-	_bombs_left = randi_range(3, 4)
+	_bombs_left = Game.rng.randi_range(3, 4)
 	_common(start)
 	target_pos = t.aim_point()
 	_vel = Vector3(target_pos.x - start.x, 0.0, target_pos.z - start.z).normalized() * speed
@@ -110,7 +110,7 @@ func _common(start: Vector3) -> void:
 		var rotor := MeshInstance3D.new()
 		rotor.mesh = MeshFactory.bomber_rotor() if heavy else MeshFactory.drone_rotor(fpv)
 		rotor.position = MeshFactory.bomber_rotor_pos(k) if heavy else MeshFactory.drone_rotor_pos(fpv, k)
-		rotor.rotation.y = randf() * TAU
+		rotor.rotation.y = randf() * TAU  # visual phase only; not a sim roll
 		add_child(rotor)
 		_rotors.append(rotor)
 	position = Vector3(start.x, altitude, start.z)
@@ -122,7 +122,8 @@ func sim(dt: float) -> void:
 	# Spin the props on the sim clock so they freeze with the pause; adjacent rotors
 	# counter-rotate and run slightly apart so the four never turn in lockstep.
 	for k in _rotors.size():
-		_rotors[k].rotation.y += ROTOR_SPIN * (1.0 + 0.11 * k) * (1.0 if k % 2 == 0 else -1.0) * dt
+		if is_instance_valid(_rotors[k]):
+			_rotors[k].rotation.y += ROTOR_SPIN * (1.0 + 0.11 * k) * (1.0 if k % 2 == 0 else -1.0) * dt
 	if fpv:
 		_sim_fpv(dt)
 	elif heavy:
@@ -133,7 +134,7 @@ func sim(dt: float) -> void:
 
 func _sim_fpv(dt: float) -> void:
 	_t += dt
-	if target.is_targetable():
+	if is_instance_valid(target) and target.is_targetable():
 		var aim := target.aim_point()
 		if _will_hit or not _committed:
 			_impact = aim  # track the live target; a rolled miss keeps its locked point
@@ -192,11 +193,11 @@ func _commit(aim: Vector3) -> void:
 			p = 0.65
 	elif not target.arrived:
 		p = 0.7
-	_will_hit = randf() < p
+	_will_hit = Game.rng.randf() < p
 	if not _will_hit:
 		var fwd := Vector3(_vel.x, 0.0, _vel.z).normalized()
 		var side_v := Vector3(-fwd.z, 0.0, fwd.x)
-		var pos := aim + fwd * randf_range(3.0, 7.0) + side_v * randf_range(-3.5, 3.5)
+		var pos := aim + fwd * Game.rng.randf_range(3.0, 7.0) + side_v * Game.rng.randf_range(-3.5, 3.5)
 		pos.y = battle.map.height_at(pos) + 0.3
 		_impact = pos
 
@@ -224,7 +225,7 @@ func _ground_fire() -> void:
 			continue
 		if Vector2(u.position.x - position.x, u.position.z - position.z).length() < reach:
 			chance += per * u.alive_count()
-	if randf() < minf(chance, 0.3 if heavy else 0.35):
+	if Game.rng.randf() < minf(chance, 0.3 if heavy else 0.35):
 		battle.fx.explosion(position, 0.9 if heavy else 0.5)
 		_finish()
 
@@ -232,7 +233,7 @@ func _ground_fire() -> void:
 func _strike() -> void:
 	var pos := _impact
 	battle.fx.explosion(pos, 1.2)
-	if _will_hit and target.is_targetable() and target.is_vehicle:
+	if _will_hit and is_instance_valid(target) and target.is_targetable() and target.is_vehicle:
 		target.take_penetration(FPV_PEN, pos, true, null)
 	battle.blast(pos, 4.0, 0.85, 50.0, 0.0, true, 35.0, 1.5, "fpv")
 	_finish()
@@ -244,7 +245,7 @@ func _strike() -> void:
 func _sim_bomber(dt: float) -> void:
 	_t += dt
 	_sim_bombs(dt)
-	if target != null and target.is_targetable():
+	if target != null and is_instance_valid(target) and target.is_targetable():
 		target_pos = target.aim_point()  # dead target: keep bombing its last position
 	var done_dropping := _dropping and _bombs_left <= 0
 	var goal := Vector3(_home.x, 0.0, _home.z) if done_dropping else target_pos
@@ -283,10 +284,11 @@ func _release() -> void:
 	var start := position
 	if not _racked.is_empty():
 		var rb: MeshInstance3D = _racked.pop_back()
-		start = rb.global_position
-		rb.queue_free()
-	var a := randf() * TAU
-	var r := sqrt(randf()) * BOMB_SCATTER
+		if is_instance_valid(rb):
+			start = rb.global_position
+			rb.queue_free()
+	var a := Game.rng.randf() * TAU
+	var r := sqrt(Game.rng.randf()) * BOMB_SCATTER
 	var aim := target_pos + Vector3(cos(a) * r, 0.0, sin(a) * r)
 	aim.y = battle.map.height_at(aim)
 	var fall := sqrt(2.0 * maxf(1.0, start.y - aim.y) / BOMB_GRAVITY)
@@ -307,6 +309,9 @@ func _release() -> void:
 func _sim_bombs(dt: float) -> void:
 	for i in range(_falling.size() - 1, -1, -1):
 		var f := _falling[i]
+		if not is_instance_valid(f["node"]):
+			_falling.remove_at(i)
+			continue
 		f["t"] = float(f["t"]) + dt
 		var t: float = f["t"]
 		var fall: float = f["fall"]
@@ -344,7 +349,7 @@ func _sim_recon(dt: float) -> void:
 				continue
 			if Vector2(u.position.x - target_pos.x, u.position.z - target_pos.z).length() > RECON_RADIUS:
 				continue
-			if randf() < skill * (1.0 - u.conceal_value() * 0.6):
+			if Game.rng.randf() < skill * (1.0 - u.conceal_value() * 0.6):
 				battle.mark_seen(u, side)
 	if loiter_left <= 0.0:
 		_finish()
@@ -355,7 +360,8 @@ func _finish() -> void:
 	# Bombs still falling live under battle, not under this node; their scheduled
 	# blasts land regardless, so only the orphaned meshes need freeing.
 	for f in _falling:
-		(f["node"] as MeshInstance3D).queue_free()
+		if is_instance_valid(f["node"]):
+			(f["node"] as MeshInstance3D).queue_free()
 	_falling.clear()
 	battle.drones.erase(self)
 	queue_free()

@@ -45,7 +45,7 @@ func _build() -> void:
 	muzzle = parts["muzzle"]
 	crew = def["crew"]
 	for w: String in def["weapons"]:
-		cooldowns[w] = randf_range(0.5, 2.0)
+		cooldowns[w] = Game.rng.randf_range(0.5, 2.0)
 	hull.rotation.y = heading
 
 
@@ -55,6 +55,12 @@ func alive_count() -> int:
 
 func total_count() -> int:
 	return int(def["crew"])
+
+
+func _weapon_ids() -> Array[String]:
+	var out: Array[String] = []
+	out.assign(def["weapons"])
+	return out
 
 
 func armor_side() -> float:
@@ -252,7 +258,7 @@ func _sim_fire(dt: float) -> void:
 			cooldowns[wid] = 0.2
 			continue
 		if Combat.fire(battle, self, from, wid, t, acc):
-			cooldowns[wid] = float(w["reload"]) * randf_range(0.9, 1.2)
+			cooldowns[wid] = float(w["reload"]) * Game.rng.randf_range(0.9, 1.2)
 			last_fired = battle.time
 			_kick(clampf(float(w["blast"]) * 0.15, 0.0, 0.7))
 		else:
@@ -277,16 +283,16 @@ func take_penetration(pen: float, src: Vector3, top: bool, shooter: Unit) -> voi
 	var armor: Array = def["armor"]
 	var value: float
 	if top:
-		if def.get("cage", false) and randf() < 0.4:
+		if def.get("cage", false) and Game.rng.randf() < 0.4:
 			return
 		value = armor[2]
 	else:
 		var to_src := Vector3(src.x - position.x, 0.0, src.z - position.z).normalized()
 		value = armor[0] if forward().dot(to_src) > 0.64 else armor[1]
-	if pen * randf_range(0.85, 1.15) < value:
+	if pen * Game.rng.randf_range(0.85, 1.15) < value:
 		receive_suppression(25.0)
 		return
-	var r := randf()
+	var r := Game.rng.randf()
 	if r < 0.55:
 		_destroy(shooter)
 	elif r < 0.72:

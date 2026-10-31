@@ -19,8 +19,8 @@ godot --headless --path . --export-debug "Android" build/heroi.apk   # debug APK
 ```
 
 Args after `--` are read via `Game.has_arg()` / `scripts/main.gd`:
-- `autostart` (skip menu and deployment), `fast` (4× speed), `log` (print events, the generated mission/enemy plan, and a casualty-by-cause tally at the end), `trace` (print every infantry casualty with terrain, cover, state and shooter)
-- `kind=assault|defend|meeting|town|treeline seed=123` — pick mission; same seed = same map (`season=summer|autumn|winter|mud` overrides the generated season)
+- `autostart` (skip menu and deployment), `fast` (4× speed), `bot` (scripted competent player in `scripts/dev/bot.gd`: uses support, pushes idle units at objectives, pulls the sniper back — for balance runs above the passive floor), `log` (print events, the generated mission/enemy plan, and a casualty-by-cause tally at the end), `trace` (print every infantry casualty with terrain, cover, state and shooter)
+- `kind=assault|defend|meeting|town|treeline seed=123` — pick mission; same seed = same map (`season=summer|autumn|winter|mud` overrides the generated season); `sim=N` seeds the battle RNG separately — the same kind/seed/sim headless run replays identically, so balance changes A/B test by varying `sim=` alone
 - `campaign` — play the saved campaign's next battle and commit the debrief (fresh operation if no save; repeated runs walk one operation); add `screen` to land on the campaign screen instead (for `shots=`)
 - `shots=/dir` (non-headless) saves screenshots at fixed frames (add `menu` to capture the start menu instead; `look=x,z,zoom` frames the camera, `hit=x,z,power,radius` lands a structural blast at frame 200); `demo` runs the scripted showcase in `scripts/dev/demo.gd` (`-- demo shots=/dir`)
 

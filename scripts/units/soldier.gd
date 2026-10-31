@@ -185,6 +185,8 @@ var _death_root := Vector3.ZERO
 var _death_w := Vector3.ZERO
 var _dead_t := 0.0
 var _face_down := true
+## Hit while lying flat: he stays face down as he lay (die()).
+var _lying := false
 var _splay := 0.0
 var _toss := Vector3.ZERO
 var _toss_y := 0.0
@@ -418,7 +420,7 @@ func hit_the_dirt(threat_pos: Vector3, map: BattleMap, sim_time: float) -> void:
 		dir = to.normalized()
 	else:
 		dir = Vector3(position.x - threat_pos.x, 0.0, position.z - threat_pos.z).normalized() \
-				if _flat_len(position, threat_pos) > 0.5 else Vector3(randf_range(-1, 1), 0.0, randf_range(-1, 1)).normalized()
+				if _flat_len(position, threat_pos) > 0.5 else Vector3(Game.rng.randf_range(-1, 1), 0.0, Game.rng.randf_range(-1, 1)).normalized()
 	_start_action("react", 0.55)
 	vel = dir * 3.5
 	want_prone = 1.0
@@ -464,11 +466,13 @@ func recover() -> void:
 	# Turn the node 180° and counter-rotate the captured pose (identical on screen):
 	# the blend's shortest path is then a roll around his long axis onto his front,
 	# and the push-up follows — instead of an end-over-end cartwheel through vertical.
-	facing += PI
+	# A man who went down face down is already belly-down the right way round.
+	if not _face_down:
+		facing += PI
+		rotation.y = facing
+		_recover_q[B.ROOT] = Quaternion(Vector3.UP, PI) * _recover_q[B.ROOT]
+		_recover_root = Vector3(-_recover_root.x, _recover_root.y, -_recover_root.z)
 	aim_yaw = facing
-	rotation.y = facing
-	_recover_q[B.ROOT] = Quaternion(Vector3.UP, PI) * _recover_q[B.ROOT]
-	_recover_root = Vector3(-_recover_root.x, _recover_root.y, -_recover_root.z)
 	prone = 1.0
 	_prone_sp.set_to(1.0)
 	want_prone = 0.0
@@ -676,18 +680,26 @@ func die(knock: Vector3, up_speed: float, is_wounded := false) -> void:
 	_death_q = _q.duplicate()
 	_death_root = _root_pos
 	_death_w = _w_pos
-	# The wounded end up on their backs, where comrades can grab them.
-	_face_down = randf() < 0.5 and not is_wounded
-	_splay = randf_range(-0.3, 0.3)
-	_toss = knock
-	_toss_vy = up_speed
+	# A man already lying flat stays as he lies: face down, same heading, no throw or
+	# spin. Anyone else is knocked over; the wounded end up on their backs, where
+	# comrades can grab them.
+	_lying = prone > 0.5
+	_face_down = _lying or (randf() < 0.5 and not is_wounded)
+	_splay = randf_range(-0.3, 0.3) * (0.4 if _lying else 1.0)
+	_toss = knock * (0.15 if _lying else 1.0)
+	_toss_vy = 0.0 if _lying else up_speed
 	_dead_t = 0.0
 	_settled = false
 	vel = Vector3.ZERO
 	# Crumples fold fast on the spot; knocked-back falls are slower and travel.
 	_fall_rate = randf_range(1.4, 2.6)
 	_spin = randf_range(-1.6, 1.6) * (0.4 if is_wounded else 1.0)
-	if up_speed > 1.0:
+	if _lying:
+		# Already down: the body just goes slack where it is.
+		_fall_rate = randf_range(2.5, 3.5)
+		_spin = 0.0
+		_tumble_rate = 0.0
+	elif up_speed > 1.0:
 		# Blast throw: limp tumble around a random horizontal axis while airborne.
 		var a := randf() * TAU
 		_tumble_axis = Vector3(cos(a), 0.0, sin(a))
@@ -697,7 +709,7 @@ func die(knock: Vector3, up_speed: float, is_wounded := false) -> void:
 		_tumble_rate = 0.0
 	_tumble_phase = 0.0
 	_make_dead_pose()
-	if knock.length() > 0.5:
+	if knock.length() > 0.5 and not _lying:
 		facing = atan2(-knock.x, -knock.z) + (0.0 if _face_down else PI)
 		rotation.y = facing
 	if not is_wounded:
@@ -730,6 +742,18 @@ func _make_dead_pose() -> void:
 	var wd := _pose_t(W_DEAD)
 	p[B.WEAPON] = Quaternion(wd.basis.orthonormalized())
 	_dead_pose = p
+
+
+## World direction from his origin towards his head while he lies on the ground.
+func head_dir() -> Vector3:
+	var d := Vector3(sin(facing), 0.0, cos(facing))
+	return -d if _face_down else d
+
+
+## Turns the lying body so its head points along `dir` (dragged head first).
+func lay_head_towards(dir: Vector3) -> void:
+	facing = atan2(dir.x, dir.z) + (PI if _face_down else 0.0)
+	rotation.y = facing
 
 
 ## A wounded man dies: bled out, or hit again.
@@ -1306,7 +1330,25 @@ func _animate_dead(dt: float, map: BattleMap) -> void:
 	if _dead_pose.is_empty():
 		_make_dead_pose()
 	var dead := _dead_pose.duplicate()
-	if wounded:
+	if wounded and _face_down:
+		# Hurt where he lay, face down: one leg drawn up to the side, a hand clawing
+		# slowly at the ground ahead, the other arm bent beside him, head lifting and
+		# turning. Face down the ground is the body's X-Y plane, so limbs move about Z:
+		# bending them about X would drive them into the earth.
+		var w := sin(_clock * 1.1 + _seed)
+		dead[B.THIGH_L] = _qe(0.0, 0.0, -0.7 - 0.12 * w)
+		dead[B.SHIN_L] = _qe(-0.25, 0.0, 1.0 + 0.1 * w)
+		dead[B.UARM_R] = _qe(0.0, 0.0, 2.5 + 0.12 * w)
+		dead[B.FARM_R] = _qe(0.0, 0.0, -0.4 - 0.3 * maxf(0.0, w))
+		dead[B.UARM_L] = _qe(0.0, 0.0, -1.1)
+		dead[B.FARM_L] = _qe(0.0, 0.0, 1.5)
+		dead[B.HEAD] = _qe(0.35 + 0.15 * maxf(0.0, sin(_clock * 0.6 + _seed)), 0.6 * sin(_clock * 0.4 + _seed), 0.0)
+		if carried_by != null:
+			dead[B.UARM_L] = _qe(2.8, 0.0, -0.25)
+			dead[B.UARM_R] = _qe(2.8, 0.0, 0.25)
+			dead[B.FARM_L] = Quaternion.IDENTITY
+			dead[B.FARM_R] = Quaternion.IDENTITY
+	elif wounded:
 		# Alive and hurting: a knee drawn up, a hand pressed to the wound, head rolling.
 		var w := sin(_clock * 1.3 + _seed)
 		dead[B.THIGH_R] = _qe(0.7 + 0.25 * w, 0.0, 0.15)

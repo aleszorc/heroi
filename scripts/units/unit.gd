@@ -15,10 +15,10 @@ const AMBUSH_RANGE_VEHICLE := 150.0
 const GUARD_ARC := PI / 4.0
 ## A known enemy within this range counts as contact for pace selection.
 const CONTACT_RANGE := 200.0
-enum State { OK, SUPPRESSED, PINNED, PANICKED, ROUTED, DESTROYED }
+enum State { OK, SUPPRESSED, PINNED, PANICKED, DESTROYED }
 
-const STATE_NAMES: Array[String] = ["Ready", "Suppressed", "Pinned", "Panicked", "Routed", "Lost"]
-const STATE_COLORS: Array[Color] = [Color(0.75, 0.92, 0.6), Color(1.0, 0.85, 0.35), Color(1.0, 0.58, 0.2), Color(1.0, 0.3, 0.25), Color(0.6, 0.6, 0.6), Color(0.45, 0.45, 0.45)]
+const STATE_NAMES: Array[String] = ["Ready", "Suppressed", "Pinned", "Panicked", "Lost"]
+const STATE_COLORS: Array[Color] = [Color(0.75, 0.92, 0.6), Color(1.0, 0.85, 0.35), Color(1.0, 0.58, 0.2), Color(1.0, 0.3, 0.25), Color(0.45, 0.45, 0.45)]
 
 var battle: Battle
 var map: BattleMap
@@ -41,6 +41,11 @@ var arrived := true
 ## Yaw in radians; 0 faces -Z (north, towards the enemy).
 var heading := 0.0
 var fire_target: Unit = null
+## Enemy the unit is walking to a firing spot against (order_fire); null otherwise.
+var attack_target: Unit = null
+var _attack_at := Vector3.ZERO
+var _attack_tries := 0
+var _attack_tick := 0.0
 ## Facing being guarded (zero until first set).
 var guard_dir := Vector3.ZERO
 
@@ -66,6 +71,15 @@ var last_seen: Array[float] = [-99.0, -99.0]
 var known_pos: Array[Vector3] = [Vector3.ZERO, Vector3.ZERO]
 var last_spot_check := 0.0
 
+## Shots fired since the last displacement (or player move) — shoot-and-move
+## (Defs.DISPLACE) is automatic for all infantry.
+var _displace_shots := 0
+## Earliest sim time the next displacement may trigger.
+var _next_displace_at := 0.0
+## Currently on a displacement move; restored to its old ambush on arrival.
+var _displacing := false
+var _displace_resume_hold := false
+
 var selected := false
 ## Free-form state owned by EnemyAI.
 var ai := {}
@@ -78,8 +92,10 @@ var vet := 0
 var _supp_recover := 1.0
 var smoke_left := 0
 var kills := 0
-## True once a routed unit has left the map.
-var removed := false
+## Russian units only: broken at Defs.PANIC rout_morale, heading off the map (_rout).
+## Ours never rout; they panic and recover in place.
+var routing := false
+var left_map := false
 
 var _label: Label3D
 var _ghost: Label3D
@@ -219,7 +235,7 @@ func _on_incoming(_amount: float) -> void:
 	pass
 
 
-## Reached the end of a move path (not routing). Infantry leaders signal a halt.
+## Reached the end of a move path. Infantry leaders signal a halt.
 func _on_arrived() -> void:
 	pass
 
@@ -265,7 +281,7 @@ func is_guarding() -> bool:
 	return arrived and guarding
 
 func is_targetable() -> bool:
-	return not removed and state != State.DESTROYED and alive_count() > 0
+	return not left_map and state != State.DESTROYED and alive_count() > 0
 
 
 ## Steady enough to hold ground and count towards victory locations.
@@ -291,6 +307,10 @@ func order_move(target: Vector3) -> bool:
 	if not can_move():
 		return false
 	_post = Vector3.INF
+	attack_target = null
+	# An explicit move order supersedes shoot-and-move: the position changes anyway.
+	_displacing = false
+	_displace_shots = 0
 	return _set_path(target)
 
 
@@ -310,13 +330,93 @@ func _set_path(target: Vector3) -> bool:
 	return true
 
 
+## Attack: fire from here if the target is in reach, otherwise walk to the nearest
+## spot it can be fired on from (Defs.ATTACK) and open fire on arrival. A pinned unit
+## keeps the order and sets off once it can move again.
 func order_fire(t: Unit) -> void:
 	if not is_targetable():
 		return
 	_post = Vector3.INF
+	_displacing = false
+	_displace_shots = 0
+	attack_target = null
+	_attack_tries = 0
+	var reach := can_engage_from(position, t)
+	if not reach and can_move() and _approach(t):
+		fire_target = t
+		return
 	_halt()
 	fire_target = t
 	hold_fire = false
+	if not reach and not can_move():
+		attack_target = t
+		_attack_tick = 0.5
+
+
+## Effective reach against `t`: the anti-armour weapons' range against a vehicle,
+## otherwise the longest weapon that may fire on it, scaled by Defs.ATTACK range.
+func attack_range(t: Unit) -> float:
+	var any := 0.0
+	var at := 0.0
+	for wid in _weapon_ids():
+		var w: Dictionary = Defs.WEAPONS[wid]
+		if not t.is_vehicle and w.get("at_only", false):
+			continue
+		any = maxf(any, float(w["range"]))
+		if t.is_vehicle and float(w["pen"]) > 0.0:
+			at = maxf(at, float(w["range"]))
+	return (at if at > 0.0 else any) * float(Defs.ATTACK["range"])
+
+
+## Whether `t` (where this side last saw it) can be fired on from `p`.
+func can_engage_from(p: Vector3, t: Unit) -> bool:
+	var at := t.known_pos[side]
+	return Vector2(p.x - at.x, p.z - at.z).length() <= attack_range(t) \
+			and map.los(p, at) >= float(Defs.ATTACK["min_vis"])
+
+
+func _approach(t: Unit) -> bool:
+	var ad: Dictionary = Defs.ATTACK
+	var at := t.known_pos[side]
+	var spot := map.firing_spot(position, at, attack_range(t), is_vehicle, float(ad["min_vis"]),
+			int(ad["search"]), float(ad["cover_m"]))
+	if spot == Vector3.INF or not _set_path(spot):
+		return false
+	attack_target = t
+	_attack_at = at
+	_attack_tick = 0.5
+	return true
+
+
+## While walking to a firing spot: drop a dead target, and re-pick the spot when the
+## target has moved well away from where it was chosen. Ordered while pinned: set off
+## as soon as the unit can move, unless the target has come into reach meanwhile.
+func _sim_attack(dt: float) -> void:
+	if not attack_target.is_targetable():
+		attack_target = null
+		return
+	_attack_tick -= dt
+	if _attack_tick > 0.0:
+		return
+	_attack_tick = 0.5
+	if arrived:
+		if can_engage_from(position, attack_target):
+			attack_target = null
+		elif can_move() and not _approach(attack_target):
+			attack_target = null
+		return
+	var at := attack_target.known_pos[side]
+	if at.distance_to(_attack_at) > float(Defs.ATTACK["replan"]) \
+			and _attack_tries < int(Defs.ATTACK["tries"]) and can_move():
+		_attack_tries += 1
+		var t := attack_target
+		if not _approach(t):
+			attack_target = null
+
+
+## Weapon ids the unit can still fire.
+func _weapon_ids() -> Array[String]:
+	return []
 
 
 ## Hold here facing `dir` (default: towards the threat).
@@ -324,6 +424,8 @@ func hold_position(dir := Vector3.ZERO) -> void:
 	if not is_targetable():
 		return
 	_post = Vector3.INF
+	_displacing = false
+	attack_target = null
 	_halt()
 	fire_target = null
 	_guard(dir)
@@ -331,6 +433,8 @@ func hold_position(dir := Vector3.ZERO) -> void:
 
 func order_stop() -> void:
 	_post = Vector3.INF
+	attack_target = null
+	_displacing = false
 	_halt()
 	fire_target = null
 
@@ -363,17 +467,35 @@ func _reach_end() -> void:
 	arrived = true
 	path = PackedVector3Array()
 	path_i = 0
-	if state == State.ROUTED:
-		removed = true
-		_set_body_visible(false)
-		battle.on_unit_lost(self)
+	if routing:
+		_leave()
 		return
+	# At the firing spot: open fire on the attack target, facing it. If it slipped out
+	# of reach on the way, walk on to a new spot.
+	var attack_dir := Vector3.ZERO
+	if attack_target != null:
+		var t := attack_target
+		attack_target = null
+		if t.is_targetable():
+			fire_target = t
+			attack_dir = t.known_pos[side] - position
+			if not can_engage_from(position, t) and _attack_tries < int(Defs.ATTACK["tries"]) \
+					and can_move():
+				_attack_tries += 1
+				if _approach(t):
+					return
 	# Back at the post it broke from: settle in facing the way it did before.
 	var back := _returning
 	_returning = false
 	if back:
 		_post = Vector3.INF
-	_guard(_post_dir if back else Vector3.ZERO)
+	_guard(_post_dir if back else attack_dir)
+	if _displacing:
+		# Displacement complete: settle back into the old ambush and re-arm.
+		_displacing = false
+		_next_displace_at = battle.time + float(Defs.DISPLACE["cooldown"])
+		if _displace_resume_hold and not seen[1 - side]:
+			hold_fire = true
 	_on_arrived()
 
 
@@ -442,9 +564,9 @@ func _update_morale(dt: float) -> void:
 		# Still under fire: only men in cover keep their nerve, ducking between bursts.
 		recover *= cover_here() * float(Defs.SUPPRESSION["under_fire"])
 	suppression = maxf(0.0, suppression - dt * recover)
-	if state == State.DESTROYED or state == State.ROUTED:
+	if state == State.DESTROYED or routing:
 		return
-	if morale <= 12.0:
+	if side == Game.RU and morale <= float(Defs.PANIC["rout_morale"]):
 		_rout()
 		return
 	if panic_time > 0.0:
@@ -477,7 +599,9 @@ func _update_morale(dt: float) -> void:
 func _panic() -> void:
 	var pn: Dictionary = Defs.PANIC
 	state = State.PANICKED
-	panic_time = randf_range(float(pn["time_min"]), float(pn["time_max"]))
+	_displacing = false
+	attack_target = null
+	panic_time = Game.rng.randf_range(float(pn["time_min"]), float(pn["time_max"]))
 	morale_hit(3.0)
 	fire_target = null
 	if is_guarding() and _post == Vector3.INF:
@@ -513,14 +637,21 @@ func _rally() -> void:
 		_guard()
 
 
+## Broken for good: the unit stops fighting and makes for its own map edge.
 func _rout() -> void:
-	state = State.ROUTED
+	routing = true
+	state = State.PANICKED
 	fire_target = null
+	attack_target = null
 	var edge := Vector3(position.x, 0.0, (BattleMap.HALF - 2.0) * (1.0 if side == Game.UA else -1.0))
 	if not _set_path(edge):
-		removed = true
-		_set_body_visible(false)
-		battle.on_unit_lost(self)
+		_leave()
+
+
+func _leave() -> void:
+	left_map = true
+	_set_body_visible(false)
+	battle.on_unit_lost(self)
 
 
 func _retreat_dir() -> Vector3:
@@ -530,14 +661,14 @@ func _retreat_dir() -> Vector3:
 # --- Simulation ---
 
 func sim(dt: float) -> void:
-	if removed or state == State.DESTROYED:
+	if left_map or state == State.DESTROYED:
 		return
 	# A hidden ambusher that has been spotted gains nothing by waiting.
 	if hold_fire and seen[1 - side]:
 		hold_fire = false
 	_update_morale(dt)
-	if removed:
-		return
+	if attack_target != null:
+		_sim_attack(dt)
 	_sim_move(dt)
 	_sim_fire(dt)
 
@@ -626,12 +757,12 @@ func armor_side() -> float:
 # --- Visuals ---
 
 func is_shown() -> bool:
-	return not removed and (side == Game.UA or seen[Game.UA])
+	return not left_map and (side == Game.UA or seen[Game.UA])
 
 
 func update_visuals(dt: float) -> void:
 	var shown := is_shown()
-	_set_body_visible(shown or (not removed and ever_seen[Game.UA] and alive_count() == 0))
+	_set_body_visible(shown or (not left_map and ever_seen[Game.UA] and alive_count() == 0))
 	if side != Game.UA:
 		var since := battle.time - last_seen[Game.UA]
 		_ghost.visible = is_targetable() and not seen[Game.UA] and ever_seen[Game.UA] and since < 45.0

@@ -29,18 +29,18 @@ static func fire(b: Battle, shooter: Unit, from: Vector3, wid: String, target: U
 	# Badly aimed fire (a pinned or moving shooter, extreme range) suppresses less too.
 	var supp_mod := (1.0 - float(Defs.SUPPRESSION["shooter_state"]) * (1.0 - clampf(acc_mod, 0.0, 1.0))) \
 			* (1.0 - float(Defs.SUPPRESSION["range"]) * (1.0 - range_f))
-	var hit := randf() < p
+	var hit := Game.rng.randf() < p
 	var impact := aim
 	# Shells aimed at men inside a house mostly strike the wall in front of them.
 	var wall := aim
-	if float(w["blast"]) > 0.0 and not target.is_vehicle and randf() < 0.7:
+	if float(w["blast"]) > 0.0 and not target.is_vehicle and Game.rng.randf() < 0.7:
 		wall = b.map.wall_entry(from, aim)
 	if wall != aim:
 		impact = wall
 		hit = false
 	elif not hit:
 		var miss := (1.0 + d * 0.02) * (float(Defs.COVER["blast_miss"]) if float(w["blast"]) > 0.0 else 1.0)
-		impact += Vector3(randf_range(-miss, miss), randf_range(-0.8, 0.3), randf_range(-miss, miss))
+		impact += Vector3(Game.rng.randf_range(-miss, miss), Game.rng.randf_range(-0.8, 0.3), Game.rng.randf_range(-miss, miss))
 		impact.y = maxf(impact.y, b.map.height_at(impact) + 0.1)
 	b.fx.shot(from, impact, w, wid)
 	b.sfx.shot(from, wid)

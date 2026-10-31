@@ -208,13 +208,17 @@ static func _ua_defenders(rng: RandomNumberGenerator, vls: Array, plan: Dictiona
 	for vd: Array in vls:
 		p.append(vd[1])
 	var cx := (p[0].x + p[1].x + p[2].x) / 3.0
+	# One squad per flag and one support team per flag, each pairing and flank drawn
+	# from the seed, so the platoon is not laid out the same way every battle.
+	var sq := _shuffled(rng, [0, 1, 2])
+	var tm := _shuffled(rng, [0, 1, 2])
 	var out := [
-		["ua_rifle", "1st Squad", p[0] + Vector3(rng.randf_range(-10, -4), 0, rng.randf_range(2, 8))],
-		["ua_rifle", "2nd Squad", p[1] + Vector3(rng.randf_range(4, 10), 0, rng.randf_range(2, 8))],
-		["ua_rifle", "3rd Squad", p[2] + Vector3(rng.randf_range(-8, 8), 0, rng.randf_range(2, 8))],
-		["ua_mg", "MG Team", p[0] + Vector3(rng.randf_range(6, 12), 0, rng.randf_range(4, 9))],
-		["ua_atgm", "Stugna", p[1] + Vector3(rng.randf_range(-12, -6), 0, rng.randf_range(4, 9))],
-		["ua_sniper", "Sniper", p[2] + Vector3(rng.randf_range(-12, 12), 0, rng.randf_range(-4, 2))],
+		["ua_rifle", "1st Squad", p[sq[0]] + Vector3(_flank(rng, 4, 10), 0, rng.randf_range(2, 8))],
+		["ua_rifle", "2nd Squad", p[sq[1]] + Vector3(_flank(rng, 4, 10), 0, rng.randf_range(2, 8))],
+		["ua_rifle", "3rd Squad", p[sq[2]] + Vector3(_flank(rng, 4, 10), 0, rng.randf_range(2, 8))],
+		["ua_mg", "MG Team", p[tm[0]] + Vector3(_flank(rng, 6, 12), 0, rng.randf_range(4, 9))],
+		["ua_atgm", "Stugna", p[tm[1]] + Vector3(_flank(rng, 6, 12), 0, rng.randf_range(4, 9))],
+		["ua_sniper", "Sniper", p[tm[2]] + Vector3(rng.randf_range(-12, 12), 0, rng.randf_range(-4, 2))],
 		["ua_drone", "Drone Team", Vector3(cx + rng.randf_range(-20, 20), 0, _max_z(p) + 26.0)],
 		["ua_bradley", "Bradley", Vector3(cx + rng.randf_range(-15, 15), 0, _max_z(p) + 20.0)],
 	]
@@ -247,6 +251,11 @@ static func _ua_defenders(rng: RandomNumberGenerator, vls: Array, plan: Dictiona
 		taken.append(q)
 		ud[2] = Vector3(clampf(q.x, -110.0, 110.0), 0.0, clampf(q.z, -110.0, 110.0))
 	return out
+
+
+## Random offset of lo..hi m to either side.
+static func _flank(rng: RandomNumberGenerator, lo: float, hi: float) -> float:
+	return rng.randf_range(lo, hi) * (1.0 if rng.randf() < 0.5 else -1.0)
 
 
 ## Nearest point on a trench line of the plan (or a trench end) within SNAP_RANGE.
@@ -336,14 +345,17 @@ static func _outside_houses(q: Vector3, buildings: Array) -> Vector3:
 	return q
 
 
-## The UA platoon lined up in the southern deploy strip for assault/meeting missions.
+## The UA platoon lined up in the southern deploy strip for assault/meeting missions,
+## in a seeded random order along the line. The list order stays fixed: the campaign
+## hands out these slots by index (Campaign._slot_pos).
 static func _ua_attackers(rng: RandomNumberGenerator, z0: float, z1: float) -> Array:
 	var ids := [["ua_rifle", "1st Squad"], ["ua_rifle", "2nd Squad"], ["ua_rifle", "3rd Squad"],
 		["ua_mg", "MG Team"], ["ua_atgm", "Stugna"], ["ua_sniper", "Sniper"],
 		["ua_drone", "Drone Team"], ["ua_bradley", "Bradley"]]
+	var slots := _shuffled(rng, range(ids.size()))
 	var out: Array = []
 	for i in ids.size():
-		var x := -84.0 + 24.0 * i + rng.randf_range(-6.0, 6.0)
+		var x := -84.0 + 24.0 * int(slots[i]) + rng.randf_range(-6.0, 6.0)
 		out.append([ids[i][0], ids[i][1], Vector3(clampf(x, -110.0, 110.0), 0.0, rng.randf_range(z0, z1))])
 	return out
 
@@ -397,9 +409,10 @@ static func _plan_defend(rng: RandomNumberGenerator, m: Dictionary, vls: Array, 
 			if rng.randf() < 0.6:
 				entries.append([rng.randf_range(0.74, 0.8), "mech", "assault", "n", ""])
 		"early_rush":
-			# Two waves inside the first minute and a half, then they regroup.
-			entries.append([0.03, "mech", "rush", "n", "road" if rng.randf() < 0.5 else "direct"])
-			entries.append([rng.randf_range(0.08, 0.14), "probe", "flank", "ne" if rng.randf() < 0.5 else "nw", "direct"])
+			# A hard MT-LB rush just after the first minute with a flank probe on
+			# its heels, then they regroup; the armour keeps its later slot.
+			entries.append([rng.randf_range(0.11, 0.14), "mech", "rush", "n", "road" if rng.randf() < 0.5 else "direct"])
+			entries.append([rng.randf_range(0.17, 0.23), "probe", "flank", "ne" if rng.randf() < 0.5 else "nw", "direct"])
 			if rng.randf() < 0.5:
 				entries.append([rng.randf_range(0.28, 0.34), "tank", "overwatch", "n", "direct"])
 			entries.append([rng.randf_range(0.42, 0.5), "armour", "assault", "n", ""])

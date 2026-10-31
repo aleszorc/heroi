@@ -27,6 +27,7 @@ var _speed_btn: Button
 var _cards := {}
 ## Support buttons: mode -> {btn, stripe}.
 var _support := {}
+## Per-unit shoot-and-move toggle, shown while an infantry unit is selected.
 var _prompt: PanelContainer
 var _prompt_label: Label
 var _setup: Control
@@ -516,7 +517,9 @@ func msg(text: String, color: Color) -> void:
 
 
 func _cycle_speed() -> void:
-	Game.speed = 2.0 if Game.speed < 2.0 else 1.0
+	const STEPS := [1.0, 2.0, 4.0]
+	var i := STEPS.find(Game.speed)
+	Game.speed = STEPS[(i + 1) % STEPS.size()]
 	_refresh()
 
 

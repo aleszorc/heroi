@@ -53,7 +53,7 @@ func all_spawned() -> bool:
 func alive_count() -> int:
 	var n := 0
 	for u in spawned:
-		if u.is_targetable() and u.state != Unit.State.ROUTED:
+		if u.is_targetable() and not u.routing:
 			n += 1
 	return n
 
@@ -164,7 +164,7 @@ func _decide_infantry(u: Unit, enemy: Unit, enemy_d: float) -> void:
 			if enemy != null and enemy_d < float(st["engage"]):
 				u.order_stop()
 				ai["mode"] = "engage"
-				ai["timer"] = randf_range(float(fire[0]), float(fire[1]))
+				ai["timer"] = Game.rng.randf_range(float(fire[0]), float(fire[1]))
 				ai["lost"] = 0
 			elif u.arrived:
 				while i < route.size() and _near(u, _waypoint(u, i), 6.0):
@@ -186,13 +186,13 @@ func _decide_infantry(u: Unit, enemy: Unit, enemy_d: float) -> void:
 					_bound(u, _waypoint(u, i), float(st["hop"]))
 					ai["mode"] = "bound"
 				else:
-					ai["timer"] = randf_range(3.0, 6.0)
+					ai["timer"] = Game.rng.randf_range(3.0, 6.0)
 		"bound":
 			if u.arrived:
 				if i < route.size() and _near(u, _waypoint(u, i), 10.0):
 					ai["i"] = i + 1
 				ai["mode"] = "engage" if enemy != null else "advance"
-				ai["timer"] = randf_range(float(fire[0]), float(fire[1]) * 0.9)
+				ai["timer"] = Game.rng.randf_range(float(fire[0]), float(fire[1]) * 0.9)
 		"withdraw":
 			if u.arrived:
 				ai["mode"] = "hold"
@@ -224,7 +224,7 @@ func _decide_vehicle(u: VehicleUnit, enemy: Unit, enemy_d: float) -> void:
 			if enemy != null and enemy_d < float(st["veh_engage"]) * 0.9 and not pushing:
 				u.order_stop()
 				ai["mode"] = "overwatch"
-				ai["timer"] = randf_range(8.0, 14.0)
+				ai["timer"] = Game.rng.randf_range(8.0, 14.0)
 			elif u.arrived:
 				# Vehicles stop one waypoint short of the objective and support from
 				# there; a wave that halts at a route point drives right up to it.

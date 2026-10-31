@@ -242,8 +242,9 @@ func _process(_delta: float) -> void:
 			var q := selected.path[i]
 			q.y = battle.map.height_at(q)
 			pts.append(q + up)
-		_ribbon(pts, 0.4, MOVE_COLOR)
-	if selected.fire_target != null and selected.fire_target.is_targetable():
+		# One line only: walking to a firing spot is drawn as the attack, in fire colour.
+		_ribbon(pts, 0.4, FIRE_COLOR if selected.attack_target != null else MOVE_COLOR)
+	elif selected.fire_target != null and selected.fire_target.is_targetable():
 		_ribbon(PackedVector3Array([c, selected.fire_target.position + up]), 0.4, FIRE_COLOR)
 
 

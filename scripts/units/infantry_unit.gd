@@ -79,12 +79,12 @@ func _build() -> void:
 		battle.units_root.add_child(s)
 		s.setup(side, String(men[i]))
 		s.fx = battle.fx
-		s.slot = Vector2((i - (n - 1) * 0.5) * 2.6, (i % 2) * 1.8 + randf_range(-0.4, 0.4))
+		s.slot = Vector2((i - (n - 1) * 0.5) * 2.6, (i % 2) * 1.8 + Game.rng.randf_range(-0.4, 0.4))
 		s.facing = heading
 		s.aim_yaw = heading
 		s.rotation.y = heading
-		s.cooldown = randf_range(0.0, 1.5)
-		s.pace = randf_range(0.93, 1.07)
+		s.cooldown = Game.rng.randf_range(0.0, 1.5)
+		s.pace = Game.rng.randf_range(0.93, 1.07)
 		s.team = i % 2
 		members.append(s)
 	_place_in_cover()
@@ -100,6 +100,14 @@ func alive_count() -> int:
 
 func total_count() -> int:
 	return members.size()
+
+
+func _weapon_ids() -> Array[String]:
+	var out: Array[String] = []
+	for s in members:
+		if s.alive:
+			out.append(s.weapon)
+	return out
 
 
 func _slot_offset(slot: Vector2) -> Vector3:
@@ -156,7 +164,7 @@ func conceal_value() -> float:
 
 
 func _speed() -> float:
-	if state == State.PANICKED or state == State.ROUTED:
+	if state == State.PANICKED:
 		return Soldier.RUN_SPEED
 	var s := Soldier.WALK_SPEED
 	match pace:
@@ -205,7 +213,7 @@ func _on_path_set(_target: Vector3) -> void:
 	_moving_team = 0
 	_bound_left = BOUND_LENGTH
 	for s in members:
-		s.start_at = battle.time + randf_range(0.1, 0.9)
+		s.start_at = battle.time + Game.rng.randf_range(0.1, 0.9)
 		s.rush_pos = Vector3.INF
 		_cancel_task(s)
 	var lead := _leader()
@@ -705,8 +713,7 @@ func _do_task(s: Soldier, dt: float, neighbours: Array[Soldier]) -> void:
 				var want := s.position - dir * Soldier.DRAG_DISTANCE
 				if map.infantry_step_open(w.position, want):
 					w.position = Vector3(want.x, map.height_at(want), want.z)
-				w.facing = atan2(dir.x, dir.z)
-				w.rotation.y = w.facing
+				w.lay_head_towards(dir)
 				var chest := w.position + dir * 1.15 + Vector3.UP * 0.3
 				var side := Vector3(dir.z, 0.0, -dir.x) * 0.16
 				s.face_point = chest
@@ -719,7 +726,7 @@ func _do_task(s: Soldier, dt: float, neighbours: Array[Soldier]) -> void:
 			s.slung = true
 			s.want_crouch = 1.0
 			s.want_prone = 0.0
-			var dir := Vector3(sin(w.facing), 0.0, cos(w.facing))
+			var dir := w.head_dir()
 			var chest := w.position + dir * 1.15 + Vector3.UP * 0.25
 			var spot := chest + Vector3(dir.z, 0.0, -dir.x) * 0.75
 			s.steer(dt, spot, 1.5, push, map)
@@ -747,7 +754,7 @@ func _on_incoming(amount: float) -> void:
 	for s in members:
 		if s.alive and not s.busy() and s.prone < 0.6:
 			var sl: Soldier = s
-			battle.schedule(randf_range(float(Defs.REACT["delay_min"]), float(Defs.REACT["delay_max"])),
+			battle.schedule(Game.rng.randf_range(float(Defs.REACT["delay_min"]), float(Defs.REACT["delay_max"])),
 					func() -> void: sl.hit_the_dirt(from, map, battle.time))
 
 
@@ -782,7 +789,7 @@ func _choose_stance(s: Soldier, stationary: bool) -> void:
 	s.ducked = false
 	s.cowering = false
 	var wants_fire := battle.time < s.engage_until and state < State.PINNED
-	if state == State.PANICKED or state == State.ROUTED:
+	if state == State.PANICKED:
 		if stationary:
 			s.cowering = true
 			if t == BattleMap.T.TRENCH or t == BattleMap.T.BUILDING or shield >= 0.45:
@@ -857,12 +864,55 @@ func _sim_fire(dt: float) -> void:
 			a *= float(Defs.WOUNDED_FIGHT["acc"])
 		var fired := Combat.fire(battle, self, s.muzzle(), s.weapon, t, a)
 		if fired:
-			s.cooldown = reload * randf_range(0.8, 1.3)
+			s.cooldown = reload * Game.rng.randf_range(0.8, 1.3)
 			s.fired(battle.time)
 			last_fired = battle.time
 			last_fired_sig = float(w.get("signature", 1.0))
+			_displace_shots += 1
+			_check_displace()
 		else:
 			s.cooldown = 0.6
+
+
+## Shoot-and-move (Defs.DISPLACE): firing reveals the position, so infantry
+## decides on its own to sneak to the best concealed cell 15–25 m away from the
+## known threat after enough shots, then settles back into its old facing and
+## ambush (unit._reach_end). Never while moving, pinned, panicked or on cooldown.
+func _check_displace() -> void:
+	var dc: Dictionary = Defs.DISPLACE
+	if _displacing or not arrived or not can_move() \
+			or _displace_shots < int(dc["shots"]) or battle.time < _next_displace_at:
+		return
+	# Dug in (trench, building): fieldworks beat a bush somewhere else — hold.
+	if map.cover_at(position) >= float(dc["hold_cover"]):
+		return
+	# With the enemy at point-blank range, breaking cover is worse than holding
+	# it: stay put and fight until the ground is clear enough to slip away.
+	if known_enemy_distance() < 30.0:
+		return
+	var away := -_threat_dir()
+	var dir := away.rotated(Vector3.UP, Game.rng.randf_range(-PI / 3.0, PI / 3.0))
+	var dist := Game.rng.randf_range(float(dc["min_dist"]), float(dc["max_dist"]))
+	var dest := map.best_cover_near(position + dir * dist, int(dc["search_cells"]), {}, threat, true)
+	# Already spotted: shifting in plain sight gains nothing, so move only if
+	# the new spot actually breaks line of sight (strictly better concealment).
+	var need := float(dc["seen_gain"]) if seen[1 - side] else -0.05
+	if _flat(dest, position) < float(dc["min_dist"]) * 0.5 \
+			or map.conceal_at(dest) < map.conceal_at(position) + need:
+		_next_displace_at = battle.time + 4.0  # nowhere as good from here; try again soon
+		return
+	var resume_hold := hold_fire
+	if not _set_path(dest):
+		_next_displace_at = battle.time + 4.0
+		return
+	_displacing = true
+	_displace_resume_hold = resume_hold
+	_displace_shots = 0
+	# Slip away unseen; once spotted there is nothing left to hide, so sprint.
+	pace = Pace.RUN if seen[1 - side] else Pace.SNEAK
+	pace_lock = battle.time + 30.0
+	if Game.has_arg("trace"):
+		print("[%s] DISPLACE %s %.0fm to (%.0f, %.0f)" % [battle.clock_text(battle.time), display_name, _flat(dest, position), dest.x, dest.z])
 
 
 ## Riflemen lob a grenade at close enemy infantry, especially men behind cover.
@@ -872,10 +922,10 @@ func _try_grenade(s: Soldier, t: Unit) -> bool:
 		return false
 	var at := t.aim_point()
 	var d := _flat(s.position, at)
-	if d < GRENADE_MIN or d > GRENADE_MAX or randf() > 0.35:
+	if d < GRENADE_MIN or d > GRENADE_MAX or Game.rng.randf() > 0.35:
 		return false
 	at.y = map.height_at(at)
-	s.start_throw(at + Vector3(randf_range(-2.0, 2.0), 0.0, randf_range(-2.0, 2.0)))
+	s.start_throw(at + Vector3(Game.rng.randf_range(-2.0, 2.0), 0.0, Game.rng.randf_range(-2.0, 2.0)))
 	s.aim_yaw = yaw_to(at - s.position)
 	s.cooldown = 1.5
 	_next_grenade = battle.time + GRENADE_COOLDOWN
@@ -889,7 +939,7 @@ func aim_point() -> Vector3:
 			alive.append(s)
 	if alive.is_empty():
 		return position + Vector3.UP
-	return alive.pick_random().center()
+	return alive[Game.rng.randi_range(0, alive.size() - 1)].center()
 
 
 func exposure_at(p: Vector3) -> float:
@@ -926,7 +976,7 @@ func take_hit(pos: Vector3, shooter: Unit) -> void:
 	if shooter != null:
 		dir = Vector3(s.position.x - shooter.position.x, 0.0, s.position.z - shooter.position.z)
 		dir = dir.normalized() if dir.length() > 0.5 else Vector3.ZERO
-	casualty(s, shooter, dir * randf_range(1.0, 2.2), 0.0, randf() < WOUND_CHANCE_BULLET)
+	casualty(s, shooter, dir * Game.rng.randf_range(1.0, 2.2), 0.0, Game.rng.randf() < WOUND_CHANCE_BULLET)
 
 
 func apply_blast(pos: Vector3, radius: float, lethal: float, supp: float, _pen: float, _top: bool) -> void:
@@ -942,14 +992,21 @@ func apply_blast(pos: Vector3, radius: float, lethal: float, supp: float, _pen: 
 			# fired across the ground is stopped by the same cover that stops bullets.
 			var c := map.cover_from(s.position, pos, cover_front())
 			var keep := (1.0 - c * float(Defs.COVER["blast_top"])) if _top else pow(1.0 - c, float(Defs.COVER["hit_power"]))
+			if _top and map.cover_at(s.position) >= float(Defs.COVER["dugin_cover"]) \
+					and (s.ducked or maxf(s.prone, s.crouch) >= 0.5):
+				# Dug in and down: the shrapnel sweeps over the lip of the hole he is
+				# in, whichever side the shell lands (hence ground cover, not the
+				# directional cover_from above). The full suppression below still
+				# lands, so the squad is pinned, not shredded.
+				keep *= float(Defs.COVER["dugin_keep"])
 			var chance := lethal * (1.0 - d / radius) * keep * (0.6 + 0.4 * s.exposure())
-			if randf() < chance:
+			if Game.rng.randf() < chance:
 				var force := (1.0 - d / radius) * radius
-				casualty(s, null, away.normalized() * force * 1.6, force * 0.9, randf() < WOUND_CHANCE_BLAST)
+				casualty(s, null, away.normalized() * force * 1.6, force * 0.9, Game.rng.randf() < WOUND_CHANCE_BLAST)
 	for s in members:
 		# A blast can finish off a man already down (the walking wounded go through
 		# the normal casualty roll above instead).
-		if s.wounded and not s.alive and _flat(s.position, pos) < radius * 0.6 and randf() < lethal * 0.5:
+		if s.wounded and not s.alive and _flat(s.position, pos) < radius * 0.6 and Game.rng.randf() < lethal * 0.5:
 			_release(s)
 			s.expire()
 			battle.on_died_of_wounds(self)
@@ -967,10 +1024,10 @@ func struck_by_collapse(area: Rect2, hit_chance: float) -> void:
 		if not area.has_point(Vector2(s.position.x, s.position.z)):
 			continue
 		if s.alive:
-			if randf() < hit_chance:
-				var dir := Vector3(randf_range(-1.0, 1.0), 0.0, randf_range(-1.0, 1.0))
-				casualty(s, null, dir * 1.2, 0.0, randf() < WOUND_CHANCE_BLAST)
-		elif s.wounded and randf() < hit_chance * 0.6:
+			if Game.rng.randf() < hit_chance:
+				var dir := Vector3(Game.rng.randf_range(-1.0, 1.0), 0.0, Game.rng.randf_range(-1.0, 1.0))
+				casualty(s, null, dir * 1.2, 0.0, Game.rng.randf() < WOUND_CHANCE_BLAST)
+		elif s.wounded and Game.rng.randf() < hit_chance * 0.6:
 			_release(s)
 			s.expire()
 			battle.on_died_of_wounds(self)

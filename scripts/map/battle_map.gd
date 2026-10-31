@@ -427,6 +427,55 @@ func find_path(from: Vector3, to: Vector3, vehicle: bool) -> PackedVector3Array:
 	return out
 
 
+## Where a unit at `from` should go to fire on `target` (Defs.ATTACK): a reachable cell
+## within `rng` of it with line of sight of at least `min_vis`. Candidates are the cells
+## within `radius_cells` that can be walked to in a straight line (stepping round a
+## corner) and every cell of the path towards the target; the shortest walk wins, less
+## `cover_m` metres per unit of cover for infantry. Vector3.INF when there is none.
+func firing_spot(from: Vector3, target: Vector3, rng: float, vehicle: bool, min_vis: float,
+		radius_cells: int, cover_m: float) -> Vector3:
+	var astar := _astar_veh if vehicle else _astar_inf
+	var c := world_to_cell(from)
+	var cover_w := 0.0 if vehicle else cover_m
+	var best := Vector3.INF
+	var best_score := INF
+	for y in range(c.y - radius_cells, c.y + radius_cells + 1):
+		for x in range(c.x - radius_cells, c.x + radius_cells + 1):
+			var cc := Vector2i(x, y)
+			if not in_bounds(cc) or astar.is_point_solid(cc):
+				continue
+			var p := cell_to_world(cc)
+			var walk := Vector2(cc - c).length() * CELL
+			var score := walk - cover[y * W + x] * cover_w
+			if score >= best_score or Vector2(p.x - target.x, p.z - target.z).length() > rng:
+				continue
+			if cc != c and not _clear_line(c, cc, INF, astar):
+				continue
+			if los(p, target) >= min_vis:
+				best_score = score
+				best = p
+	var a := _nearest_open(c, astar)
+	var b := _nearest_open(world_to_cell(target), astar)
+	if a.x < 0 or b.x < 0:
+		return best
+	var ids := astar.get_id_path(a, b)
+	var walk := 0.0
+	for k in ids.size():
+		if k > 0:
+			walk += Vector2(ids[k] - ids[k - 1]).length() * CELL
+		if walk - cover_w >= best_score:
+			break
+		var cc: Vector2i = ids[k]
+		var p := cell_to_world(cc)
+		var score := walk - cover[cc.y * W + cc.x] * cover_w
+		if score >= best_score or Vector2(p.x - target.x, p.z - target.z).length() > rng:
+			continue
+		if los(p, target) >= min_vis:
+			best_score = score
+			best = p
+	return best
+
+
 func _cost(c: Vector2i, astar: AStarGrid2D) -> float:
 	return astar.get_point_weight_scale(c)
 
@@ -574,7 +623,9 @@ func wall_entry(from: Vector3, to: Vector3) -> Vector3:
 ## Best cover cell near p for one soldier, facing a threat at `threat` when given.
 ## Cells in `taken` are skipped so a squad spreads out, and cells on the far side
 ## of an intact wall are never offered — a man must be able to walk there.
-func best_cover_near(p: Vector3, radius_cells: int, taken: Dictionary, threat := Vector3.INF) -> Vector3:
+## With `by_conceal` the search scores concealment instead of protection
+## (shoot-and-move displacement wants to vanish, not to be shot at).
+func best_cover_near(p: Vector3, radius_cells: int, taken: Dictionary, threat := Vector3.INF, by_conceal := false) -> Vector3:
 	var c := world_to_cell(p)
 	var best := c
 	var best_score := -INF
@@ -585,8 +636,8 @@ func best_cover_near(p: Vector3, radius_cells: int, taken: Dictionary, threat :=
 				continue
 			if cc != c and not _clear_line(c, cc, INF, _astar_inf):
 				continue
-			var value := cover[y * W + x]
-			if threat != Vector3.INF:
+			var value := conceal[y * W + x] if by_conceal else cover[y * W + x]
+			if threat != Vector3.INF and not by_conceal:
 				value = maxf(value, shield_at(cell_to_world(cc), threat))
 			var score := value * 10.0 - Vector2(cc - c).length() * 0.8
 			if score > best_score:
@@ -599,4 +650,4 @@ func best_cover_near(p: Vector3, radius_cells: int, taken: Dictionary, threat :=
 	taken[best + Vector2i(-1, 0)] = true
 	taken[best + Vector2i(0, 1)] = true
 	taken[best + Vector2i(0, -1)] = true
-	return cell_to_world(best) + Vector3(randf_range(-0.4, 0.4), 0.0, randf_range(-0.4, 0.4))
+	return cell_to_world(best) + Vector3(Game.rng.randf_range(-0.4, 0.4), 0.0, Game.rng.randf_range(-0.4, 0.4))

@@ -73,6 +73,10 @@ func _ready() -> void:
 		demo.set("battle", battle)
 		demo.set("cam", cam)
 		add_child(demo)
+	if Game.has_arg("bot"):
+		var bot: Node = load("res://scripts/dev/bot.gd").new()
+		bot.set("battle", battle)
+		add_child(bot)
 
 
 ## Test hooks: `godot -- kind=assault seed=123` picks the mission on first launch.
@@ -90,7 +94,7 @@ func _apply_mission_args() -> void:
 		elif a.begins_with("seed="):
 			Game.next_seed = int(a.substr(5))
 			Game.show_menu = false
-		elif a.begins_with("shots=") or a == "autostart" or a == "demo" or a == "campaign":
+		elif a.begins_with("shots=") or a == "autostart" or a == "demo" or a == "campaign" or a == "bot":
 			# `menu` keeps the start menu up so a shots run can capture it.
 			Game.show_menu = Game.has_arg("menu")
 

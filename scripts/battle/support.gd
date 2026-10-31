@@ -11,8 +11,8 @@ const BOMBER_COOLDOWN := 20.0
 
 var battle: Battle
 var mortar_left := 2
-var fpv_left := 4
-var bomber_left := 2
+var fpv_left := 5
+var bomber_left := 3
 var recon_ready_at := 0.0
 var fpv_ready_at := 0.0
 var bomber_ready_at := 0.0
@@ -126,15 +126,15 @@ func launch_bomber(t: Unit) -> bool:
 	bomber_ready_at = battle.time + BOMBER_COOLDOWN
 	var d := Drone.new()
 	battle.add_drone(d)
-	var x := clampf(t.position.x + randf_range(-25.0, 25.0), -BattleMap.HALF + 6.0, BattleMap.HALF - 6.0)
+	var x := clampf(t.position.x + Game.rng.randf_range(-25.0, 25.0), -BattleMap.HALF + 6.0, BattleMap.HALF - 6.0)
 	d.setup_bomber(battle, Game.UA, Vector3(x, 0.0, BattleMap.HALF - 2.0), t)
 	return true
 
 
 ## Schedules one shell: scatter is resolved now so the incoming whistle can lead the impact.
 func _volley(delay: float, target: Vector3, scatter: float, radius: float, lethal: float, supp: float, pen: float, struct_power := 0.0) -> void:
-	var a := randf() * TAU
-	var r := sqrt(randf()) * scatter
+	var a := Game.rng.randf() * TAU
+	var r := sqrt(Game.rng.randf()) * scatter
 	var pos := target + Vector3(cos(a) * r, 0.0, sin(a) * r)
 	pos.y = battle.map.height_at(pos)
 	battle.schedule(maxf(0.0, delay - 0.9), func() -> void: battle.sfx.shell_whistle(pos))
@@ -166,7 +166,7 @@ func sim(_dt: float) -> void:
 
 
 func _gap(c: Dictionary) -> float:
-	return randf_range(float(c["min"]), float(c["max"]))
+	return Game.rng.randf_range(float(c["min"]), float(c["max"]))
 
 
 ## Opening barrage walked across a band of ground the Russians expect us to hold
@@ -181,8 +181,8 @@ func _prep_barrage(prep: Dictionary) -> void:
 	if _log:
 		print("[%s] RU prep barrage (%s): %d shells on x %d..%d z %d..%d" % [Battle.clock_text(battle.time), String(prep.get("mode", "full")), shells, int(band.position.x), int(band.end.x), int(band.position.y), int(band.end.y)])
 	for i in shells:
-		_volley(3.0 + i * float(a["spacing"]) + randf() * 0.5,
-				Vector3(randf_range(band.position.x, band.end.x), 0.0, randf_range(band.position.y, band.end.y)),
+		_volley(3.0 + i * float(a["spacing"]) + Game.rng.randf() * 0.5,
+				Vector3(Game.rng.randf_range(band.position.x, band.end.x), 0.0, Game.rng.randf_range(band.position.y, band.end.y)),
 				0.0, float(a["radius"]), float(a["lethal"]), float(a["supp"]), float(a["pen"]), float(a["struct"]))
 
 
@@ -199,7 +199,7 @@ func _ru_fpv() -> void:
 	var best: Unit = null
 	var best_score := -1.0
 	for u in _ru_known_targets(8.0):
-		var score := randf()
+		var score := Game.rng.randf()
 		if u.is_vehicle:
 			score += 3.0
 		elif u.def_id == "ua_atgm" or u.def_id == "ua_mg":
@@ -215,14 +215,14 @@ func _ru_fpv() -> void:
 		print("[%s] RU FPV launched at %s" % [Battle.clock_text(battle.time), best.display_name])
 	var d := Drone.new()
 	battle.add_drone(d)
-	d.setup_fpv(battle, Game.RU, Vector3(best.position.x + randf_range(-30.0, 30.0), 0.0, -BattleMap.HALF + 2.0), best)
+	d.setup_fpv(battle, Game.RU, Vector3(best.position.x + Game.rng.randf_range(-30.0, 30.0), 0.0, -BattleMap.HALF + 2.0), best)
 
 
 func _ru_artillery(shells: int) -> void:
 	var targets := _ru_known_targets(15.0)
 	if targets.is_empty():
 		return
-	var target: Unit = targets.pick_random()
+	var target: Unit = targets[Game.rng.randi_range(0, targets.size() - 1)]
 	var aim: Vector3 = target.known_pos[Game.RU]
 	if _log:
 		print("[%s] RU artillery: %d shells on %s" % [Battle.clock_text(battle.time), shells, target.display_name])
@@ -232,7 +232,7 @@ func _ru_artillery(shells: int) -> void:
 
 
 func _ru_recon() -> void:
-	var aim: Vector3 = battle.vls.pick_random().position
+	var aim: Vector3 = battle.vls[Game.rng.randi_range(0, battle.vls.size() - 1)].position
 	var d := Drone.new()
 	battle.add_drone(d)
 	d.setup_recon(battle, Game.RU, Vector3(aim.x, 0.0, -BattleMap.HALF + 2.0), aim, 20.0)

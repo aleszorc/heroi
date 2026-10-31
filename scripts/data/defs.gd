@@ -12,6 +12,26 @@ const CRAWL := 1.0
 ## then stay low for `stay_low` seconds. `cooldown` limits how often a squad re-reacts.
 const REACT := {"trigger": 9.0, "cooldown": 5.0, "delay_min": 0.1, "delay_max": 0.3, "stay_low": 4.0}
 
+## Shell dive (§3.7b/§7): each incoming shell makes free men within blast radius ×
+## radius_mult throw themselves flat (chance per man, on the whistle just before
+## impact) and stay low for stay_low seconds past the round, so a fire mission
+## catches a squad prone in its holes rather than upright — pinned, not shredded.
+const SHELL_REACT := {"radius_mult": 3.0, "chance": 0.9, "stay_low": 5.0}
+
+## Shoot-and-move (§3.4): infantry decides on its own. After firing `shots`
+## times from one position a squad sneaks to the best concealed cell
+## min_dist..max_dist metres away from the known threat, then settles back into
+## its old facing and ambush. It holds instead when dug in (ground cover >=
+## hold_cover: a trench or a building is never abandoned), and once the enemy
+## has it spotted it only moves to strictly better concealment (seen_gain) —
+## shifting in plain sight gains nothing. cooldown: s after a displacement
+## before the next may trigger. search_cells: concealment search radius
+## (BattleMap cells) around the candidate point. A player move order cancels it;
+## pinned or panicked units never displace. It never trades down: a spot with
+## worse concealment than the current one is refused (the team stays in its
+## treeline rather than crawling into a field).
+const DISPLACE := {"shots": 3, "min_dist": 15.0, "max_dist": 25.0, "cooldown": 20.0, "search_cells": 4, "hold_cover": 0.6, "seen_gain": 0.1}
+
 ## Cover against fire (GDD §3.5-3.6). Terrain cover c (BattleMap.PROPS) keeps
 ## (1 - c)^hit_power of the hit chance, so a trench or a wood is worth far more than
 ## a crater. Terrain cover faces the threat it was taken against: inside +-flank_arc
@@ -22,6 +42,8 @@ const COVER := {
 	"flank_arc": PI / 3.0,
 	"flank_keep": 0.4,
 	"blast_top": 0.65,       # top attack (shells, drones): lethality × (1 - cover × blast_top)
+	"dugin_cover": 0.6,      # ground cover (the hole he is in: trench, building) at/above which a man counts as dug in
+	"dugin_keep": 0.35,      # lethality share a dug-in man who is down keeps vs top attack (suppression stays full)
 	"blast_miss": 2.5,       # a missed rocket or shell scatters this much further than a bullet
 	"dodge_cover": 0.5,      # in cover this good a squad stays down instead of running from an FPV
 }
@@ -43,8 +65,17 @@ const SUPPRESSION := {
 ## Breaking under fire (GDD §3.6). A panicked unit never runs across a field: with
 ## stay_cover of directional cover it goes to ground where it is, otherwise it dashes
 ## at most `dash` m to the best cover close by, and when the panic passes it crawls
-## back to the post it was holding.
-const PANIC := {"time_min": 7.0, "time_max": 12.0, "stay_cover": 0.3, "dash": 8.0}
+## back to the post it was holding. A Russian unit whose morale falls to rout_morale
+## breaks for good and leaves the map; ours never rout.
+const PANIC := {"time_min": 7.0, "time_max": 12.0, "stay_cover": 0.3, "dash": 8.0, "rout_morale": 12.0}
+
+## Attack order (GDD §3.3): a tapped enemy out of reach makes the unit walk to a firing
+## spot — within `range` × its weapon range (the anti-armour weapons' range against a
+## vehicle) and with line of sight of at least `min_vis`. The spot nearest by path wins,
+## a metre of walking traded for 1/`cover_m` of cover; the search covers `search` cells
+## round the unit plus the path towards the target. A target that moves `replan` m from
+## where the spot was chosen makes the unit pick a new one (at most `tries` times).
+const ATTACK := {"range": 0.85, "min_vis": 0.35, "cover_m": 10.0, "search": 8, "replan": 20.0, "tries": 3}
 
 ## Spotting (GDD §3.4): concealment changes with what the unit is doing. Firing
 ## reveals it for fire_time s, scaled by the weapon's "signature" (1 = a rifle burst;
@@ -80,7 +111,7 @@ const WOUNDED_FIGHT := {
 ## (the campaign ammunition) and whole new units.
 const CAMPAIGN := {
 	"start_requisition": 6,
-	"start_support": {"mortar": 2, "fpv": 4, "bomber": 2},
+	"start_support": {"mortar": 2, "fpv": 5, "bomber": 3},
 	"rp_battle": 2,            # for fighting at all
 	"rp_victory": 3,
 	"rp_objective": 1,         # per objective held when the battle ends
@@ -140,8 +171,9 @@ const UNITS := {
 ## distance, cover and posture), supp (suppression at the centre, felt out to 3×radius,
 ## so a near miss within ~10 m pins a squad), pen (top-attack armour penetration) and
 ## struct (wall hit points at the centre; a brick wall has 130).
-## Tuned so that six rounds on a squad in the open are usually crippling, six on a
-## trench still cost a man or two and pin the rest; the prep barrage is a notch below
+## Tuned so that six rounds on a squad in the open are usually crippling, while six
+## on a trench usually pin the squad for 0-2 casualties (the shell dive SHELL_REACT
+## and the dug-in reduction COVER dugin_keep do that); the prep barrage is a notch below
 ## (it is the opening act, not the decider) and spread over a band, not a point.
 const ARTILLERY := {
 	"mortar": {"rounds": 6, "delay": 10.0, "spacing": 0.9, "scatter": 9.0, "radius": 8.0, "lethal": 0.75, "supp": 60.0, "pen": 25.0, "struct": 90.0},

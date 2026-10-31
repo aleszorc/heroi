@@ -53,6 +53,9 @@ const GRENADE_FUSE := 3.6
 
 func setup(m: Dictionary) -> void:
 	mission = m
+	# Deterministic battle: all sim rolls draw from Game.rng, seeded per battle
+	# from the mission seed (`-- sim=N` overrides it for A/B balance runs).
+	Game.seed_sim(int(m.get("seed", Game.next_seed)))
 	_probe = Game.has_arg("probe")
 	if Game.has_arg("log"):
 		message.connect(func(text: String, _c: Color) -> void: print("[%s] %s" % [clock_text(time), text]))
@@ -180,6 +183,9 @@ func throw_grenade(from: Vector3, to: Vector3, _side: int) -> void:
 func _sim_grenades(dt: float) -> void:
 	for i in range(_grenades.size() - 1, -1, -1):
 		var g := _grenades[i]
+		if not is_instance_valid(g["node"]):
+			_grenades.remove_at(i)
+			continue
 		var node: MeshInstance3D = g["node"]
 		g["t"] = float(g["t"]) + dt
 		var t: float = g["t"]
@@ -193,7 +199,7 @@ func _sim_grenades(dt: float) -> void:
 			if k >= 1.0:
 				g["landed"] = true
 				var dir := Vector3(to.x - from.x, 0.0, to.z - from.z).normalized()
-				g["vel"] = dir * randf_range(1.0, 3.0)
+				g["vel"] = dir * Game.rng.randf_range(1.0, 3.0)
 				_grenade_alarm(to)
 		else:
 			var v: Vector3 = g["vel"]
@@ -209,6 +215,29 @@ func _sim_grenades(dt: float) -> void:
 			blast(pos, 6.0, 0.7, 45.0, 0.0, false, 30.0, 1.5)
 
 
+## A shell just landed (Defs.SHELL_REACT): free men within radius_mult blast radii
+## dive flat towards micro-cover and stay low past the next rounds, so a fire
+## mission catches the squad in its holes, not upright. Every round re-extends
+## the stay-low window, which is what keeps a squad flat "for the duration" of
+## a barrage. Men in trenches or buildings just keep their heads down (the
+## stance logic ducks them); panicked men are already cowering.
+func shell_alarm(at: Vector3, r: float, stay: float) -> void:
+	for u in units:
+		if not (u is InfantryUnit) or not u.is_targetable() or u.state >= Unit.State.PANICKED:
+			continue
+		if u.distance_to_point(at) > r:
+			continue
+		for s in (u as InfantryUnit).members:
+			if not s.alive or Vector2(s.position.x - at.x, s.position.z - at.z).length() > r:
+				continue
+			if Game.rng.randf() < float(Defs.SHELL_REACT["chance"]):
+				var sl: Soldier = s
+				var until := time + stay
+				schedule(Game.rng.randf_range(0.1, 0.4), func() -> void:
+					sl.hit_the_dirt(at, map, time)
+					sl.stay_low_until = maxf(sl.stay_low_until, until))
+
+
 ## Men who see a grenade land near them throw themselves flat away from it.
 func _grenade_alarm(at: Vector3) -> void:
 	for u in units:
@@ -216,9 +245,9 @@ func _grenade_alarm(at: Vector3) -> void:
 			continue
 		for s in (u as InfantryUnit).members:
 			var away := Vector3(s.position.x - at.x, 0.0, s.position.z - at.z)
-			if s.alive and away.length() < 7.0 and randf() < 0.75:
-				var dir := away if away.length() > 0.3 else Vector3(randf_range(-1, 1), 0.0, randf_range(-1, 1))
-				schedule(randf_range(0.15, 0.6), func() -> void: s.dive(dir))
+			if s.alive and away.length() < 7.0 and Game.rng.randf() < 0.75:
+				var dir := away if away.length() > 0.3 else Vector3(Game.rng.randf_range(-1, 1), 0.0, Game.rng.randf_range(-1, 1))
+				schedule(Game.rng.randf_range(0.15, 0.6), func() -> void: s.dive(dir))
 
 
 func on_died_of_wounds(u: Unit) -> void:
@@ -380,7 +409,7 @@ func _spot(target: Unit) -> void:
 			break
 		var p := clampf(vis * (1.0 - conceal) * (1.0 - d / SIGHT * 0.6) * (2.0 if recently else 1.0), 0.0, 1.0)
 		# p is the chance per half second; scale it to the time since the last check.
-		if randf() < 1.0 - pow(1.0 - p, elapsed / 0.5):
+		if Game.rng.randf() < 1.0 - pow(1.0 - p, elapsed / 0.5):
 			found = true
 			break
 	if found:
@@ -405,6 +434,9 @@ func blast(pos: Vector3, radius: float, lethal: float, supp: float, pen: float, 
 		if u.is_targetable():
 			u.apply_blast(pos, radius, lethal, supp, pen, top)
 	cause = ""
+	if label == "arty":
+		# Incoming shellfire: everyone nearby goes flat before the next round lands.
+		shell_alarm(pos, radius * float(Defs.SHELL_REACT["radius_mult"]), float(Defs.SHELL_REACT["stay_low"]))
 	if struct_power > 0.0:
 		for b in buildings:
 			if b.near(pos, struct_radius):
@@ -501,7 +533,7 @@ func _check_end() -> void:
 	var kind := String(mission.get("kind", "defend"))
 	var ua_alive := 0
 	for u in units:
-		if u.side == Game.UA and u.is_targetable() and u.state != Unit.State.ROUTED:
+		if u.side == Game.UA and u.is_targetable():
 			ua_alive += 1
 	if ua_alive == 0:
 		_finish(false, "Your force has been destroyed.")

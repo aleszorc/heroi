@@ -77,14 +77,17 @@ func _ready() -> void:
 
 ## Playbacks alive at engine shutdown are reported as leaks; stop everything on the way out.
 func _exit_tree() -> void:
-	_ambience.stop()
-	_ui.stop()
+	if is_instance_valid(_ambience):
+		_ambience.stop()
+	if is_instance_valid(_ui):
+		_ui.stop()
 	for p in _pool:
-		p.stop()
-	for e: Dictionary in _loops.values():
-		var p: AudioStreamPlayer3D = e["player"]
 		if is_instance_valid(p):
 			p.stop()
+	for e: Dictionary in _loops.values():
+		var lp: Variant = e["player"]
+		if is_instance_valid(lp):
+			lp.stop()
 
 
 # --- One-shot events (called from the sim) ---
